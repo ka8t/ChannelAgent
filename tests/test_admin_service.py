@@ -106,7 +106,7 @@ async def test_dispatch_allowed_writes_inbound_and_outbound_logs(fresh_db, monke
     from app.db.session import init_db, session_scope
     from app.security.auth import grant_permission
 
-    async def fake_run_turn(channel, user_id, text):
+    async def fake_run_turn(channel, user_id, agent_id, text):
         return "canned reply"
 
     monkeypatch.setattr(graph_module, "run_turn", fake_run_turn)

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     AccessRequest,
     ActionLog,
+    Agent,
     Channel,
     ChannelIdentity,
     Direction,
@@ -19,15 +20,64 @@ from app.db.models import (
 )
 from app.security.auth import grant_permission
 
+DEFAULT_AGENT_NAME = "default"
+
+
+async def get_or_create_default_agent(session: AsyncSession, user_id: int) -> Agent:
+    """A user's first Agent is created lazily, on first use — a
+    single-agent user never has to think about agents at all (#37).
+    """
+    stmt = select(Agent).where(Agent.user_id == user_id, Agent.name == DEFAULT_AGENT_NAME)
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    agent = Agent(user_id=user_id, name=DEFAULT_AGENT_NAME)
+    session.add(agent)
+    await session.flush()
+    return agent
+
+
+async def create_agent(session: AsyncSession, user_id: int, name: str) -> Agent:
+    agent = Agent(user_id=user_id, name=name)
+    session.add(agent)
+    await session.flush()
+    return agent
+
+
+async def list_agents(session: AsyncSession, user_id: int) -> list[Agent]:
+    stmt = select(Agent).where(Agent.user_id == user_id)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def rename_agent(session: AsyncSession, agent_id: int, new_name: str) -> Agent:
+    """Admin-editable (#37): callable against any user's Agent, not only
+    the owning user's own — callers decide who's allowed to call this.
+    """
+    agent = await session.get(Agent, agent_id)
+    if agent is None:
+        raise ValueError(f"No agent with id {agent_id}")
+    agent.name = new_name
+    await session.flush()
+    return agent
+
+
+async def set_agent_active(session: AsyncSession, agent_id: int, is_active: bool) -> Agent:
+    agent = await session.get(Agent, agent_id)
+    if agent is None:
+        raise ValueError(f"No agent with id {agent_id}")
+    agent.is_active = is_active
+    await session.flush()
+    return agent
+
 
 async def record_action(
     session: AsyncSession,
     *,
     user_id: int,
+    agent_id: int,
     channel: Channel,
     direction: Direction,
     text: str,
-    agent_id: int | None = None,
 ) -> ActionLog:
     entry = ActionLog(
         user_id=user_id, agent_id=agent_id, channel=channel, direction=direction, text=text

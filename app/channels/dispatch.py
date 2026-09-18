@@ -12,7 +12,7 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.admin.service import record_action, request_access
+from app.admin.service import get_or_create_default_agent, record_action, request_access
 from app.channels.schema import NormalizedEvent
 from app.db.models import Direction
 from app.graph import run_turn
@@ -34,21 +34,23 @@ async def dispatch_event(session: AsyncSession, event: NormalizedEvent) -> None:
         key = channel_identifier_key(event.channel, event.user_id)
         await request_access(session, event.channel, key, event.text)
         if decision.user is not None:
+            agent = await get_or_create_default_agent(session, decision.user.id)
             await record_action(
-                session, user_id=decision.user.id, channel=event.channel,
+                session, user_id=decision.user.id, agent_id=agent.id, channel=event.channel,
                 direction=Direction.INBOUND, text=event.text,
             )
         await session.commit()
         await event.reply(DENIED_MESSAGE)
         return
 
+    agent = await get_or_create_default_agent(session, decision.user.id)
     await record_action(
-        session, user_id=decision.user.id, channel=event.channel,
+        session, user_id=decision.user.id, agent_id=agent.id, channel=event.channel,
         direction=Direction.INBOUND, text=event.text,
     )
-    reply_text = await run_turn(event.channel, event.user_id, event.text)
+    reply_text = await run_turn(event.channel, event.user_id, agent.id, event.text)
     await record_action(
-        session, user_id=decision.user.id, channel=event.channel,
+        session, user_id=decision.user.id, agent_id=agent.id, channel=event.channel,
         direction=Direction.OUTBOUND, text=reply_text,
     )
     await session.commit()

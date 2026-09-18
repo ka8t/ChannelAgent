@@ -3,8 +3,8 @@ channel routes through, replacing the legacy Hermes agent loop, with
 conversation state isolated per user via LangGraph's native
 checkpointer.
 
-Call build_thread_id(channel, user_id) to get the checkpointer key for
-a given identity, then invoke the compiled graph with that thread_id
+Call build_thread_id(channel, user_id, agent_id) to get the checkpointer
+key for a given identity+agent, then invoke the compiled graph with it
 in config["configurable"]. See #17 for wiring the response back to the
 originating channel adapter (not this module's job).
 """
@@ -30,13 +30,15 @@ class GraphState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
 
-def build_thread_id(channel: Channel, user_id: str) -> str:
-    """thread_id scheme from docs/ARCHITECTURE.md: telegram_{user_id},
-    email_{email_hash}, matrix_{user_id} — uses the same deterministic
-    key as the Auth Node (app/security/auth.py) so a given identity
-    always maps to the same conversation thread.
+def build_thread_id(channel: Channel, user_id: str, agent_id: int) -> str:
+    """thread_id scheme, extended by #37 for multiple agents per user:
+    {channel}_{identity_key}_{agent_id} — e.g. telegram_123_4,
+    email_{hash}_4. Same deterministic identity key as the Auth Node
+    (app/security/auth.py) so a given (identity, agent) pair always
+    maps to the same conversation thread, and two agents belonging to
+    the same user never share one.
     """
-    return f"{channel.value}_{channel_identifier_key(channel, user_id)}"
+    return f"{channel.value}_{channel_identifier_key(channel, user_id)}_{agent_id}"
 
 
 async def call_llm(state: GraphState) -> GraphState:
@@ -76,11 +78,11 @@ _checkpointer = MemorySaver()
 compiled_graph = build_graph().compile(checkpointer=_checkpointer)
 
 
-async def run_turn(channel: Channel, user_id: str, text: str) -> str:
+async def run_turn(channel: Channel, user_id: str, agent_id: int, text: str) -> str:
     """Entry point channel adapters call after a message passes
     authorization (app/security/auth.py). Returns the assistant's reply.
     """
-    thread_id = build_thread_id(channel, user_id)
+    thread_id = build_thread_id(channel, user_id, agent_id)
     result = await compiled_graph.ainvoke(
         {"messages": [HumanMessage(content=text)]},
         config={"configurable": {"thread_id": thread_id}},

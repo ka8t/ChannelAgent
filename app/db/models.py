@@ -119,17 +119,29 @@ class Permission(Base):
     channel_identity: Mapped["ChannelIdentity"] = relationship(back_populates="permissions")
 
 
-class ActionLog(Base):
-    """Per-user, per-agent audit trail (#38). agent_id is a plain nullable
-    int, not a ForeignKey, until #37's Agent table exists — add the FK
-    via a migration then, don't backfill it by hand.
+class Agent(Base):
+    """A User-owned, channel-agnostic autonomous agent (#37). Admin-editable
+    — see app/admin/service.py — not only self-service by the owning user.
     """
+
+    __tablename__ = "agents"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_agent_user_name"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ActionLog(Base):
+    """Per-user, per-agent audit trail (#38)."""
 
     __tablename__ = "action_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    agent_id: Mapped[int | None] = mapped_column(default=None)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agents.id"), nullable=False)
     channel: Mapped[Channel] = mapped_column(_db_enum(Channel), nullable=False)
     direction: Mapped[Direction] = mapped_column(_db_enum(Direction), nullable=False)
     # Conversation content — same sensitivity class as ChannelIdentity.raw_address.
