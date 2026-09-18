@@ -15,6 +15,13 @@
 - **Secrets**: never commit `.env` or key material. `ENCRYPTION_KEY`
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
+- **Never close a GitHub issue unless it is actually implemented and
+  verified.** Rule from the user (2026-09-18). A closing comment must
+  describe a real check that was actually run (a test, a build, an
+  end-to-end call) against the current code, not a description of
+  intent. If re-checking a closed issue later finds the claim doesn't
+  hold, reopen it — don't leave it closed and just fix the code
+  silently.
 - **`start.sh` must manage every application variable, and must never
   drift from `.venv`.** Two standing requirements from the user
   (2026-09-18), binding on any future change to `start.sh`:
@@ -197,3 +204,32 @@ Next up: the `P1-high` issues (#13, #14, #17, #22-24, #26-27).
   pre-create `data/`. Fixed with `_ensure_sqlite_dir_exists()` in that
   same file, not by having `start.sh` paper over it with an extra
   `mkdir`.
+
+## Closed-issue audit (2026-09-18)
+
+Per the "never close an issue unless actually implemented" rule above,
+re-ran every closed issue's verification fresh, from a clean state,
+rather than trusting the original closing comments:
+
+- #8, #9, #10, #12 (DB models, `EncryptedString`, session, Auth Node):
+  re-ran the full DB+encryption+auth script — round-trip, fail-closed
+  denial, immediate revocation all still hold.
+- #15, #16 (LangGraph skeleton, checkpointer): re-ran the mock-backend
+  isolation test — independent per-user threads, correct history
+  accumulation, hashed email `thread_id`, all still hold.
+- #18, #19 (Dockerfile, docker-compose): fresh `docker build` +
+  `docker run`, no `.env` still fails fast on `ENCRYPTION_KEY`, with
+  `.env` still boots and creates the DB on the mounted volume.
+- #20 (real `host.docker.internal` reachability): started the real
+  native `llama-server` again and re-ran `app.graph.run_turn()` inside
+  the real container — still returns a real completion.
+- #33 (`start.sh` auto-start / mode split / dir-creation fix):
+  re-confirmed `_ensure_sqlite_dir_exists()` creates a missing `data/`
+  from scratch, and re-ran both `start.sh` modes against the
+  already-running `llama-server` — native still overrides
+  `LLAMA_SERVER_URL` to `localhost`, default (Docker) mode still keeps
+  it at `host.docker.internal`.
+
+Result: all 10 closed issues held up. Nothing reopened. All test
+containers/images/processes/data removed afterward — this audit left
+nothing running.
