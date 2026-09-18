@@ -1,0 +1,35 @@
+# --- Secrets & environment ---
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# --- Encryption keys & local key material ---
+*.fernet
+secrets/
+
+# --- Local databases (runtime data, never committed) ---
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Docker ---
+*.log
+
+# --- Editor / OS ---
+.DS_Store
+.vscode/
+.idea/

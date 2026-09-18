@@ -1,0 +1,11 @@
+langgraph
+langchain-core
+fastapi
+uvicorn[standard]
+sqlalchemy
+aiosqlite
+pydantic
+pydantic-settings
+cryptography
+python-telegram-bot
+matrix-nio
