@@ -9,7 +9,14 @@
 #   ./start.sh --native   -> run app/main.py directly via a local venv,
 #                             for fast iteration without a rebuild each time
 #
-# Both modes need a native llama-server running on this Mac first
+# Plus two config-management commands (#34), so every variable the app
+# needs can be read/changed without opening .env in an editor:
+#   ./start.sh --show-config       -> list every variable from
+#                                      .env.example with its current
+#                                      .env value (secrets masked)
+#   ./start.sh --set KEY=VALUE     -> add or update one variable in .env
+#
+# Both run modes need a native llama-server running on this Mac first
 # (Metal-accelerated inference). If it isn't already reachable on
 # LLAMA_PORT, this script starts it itself, using LLAMA_SERVER_BIN /
 # MODELS_DIR / MODEL_FILE from .env (same invocation as Hermes's own
@@ -22,6 +29,98 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
+
+show_config() {
+  if [ ! -f .env ]; then
+    echo "No .env found — copying from .env.example." >&2
+    cp .env.example .env
+  fi
+  python3 - <<'PYEOF'
+SENSITIVE = {
+    "ENCRYPTION_KEY",
+    "API_SERVER_KEY",
+    "TELEGRAM_BOT_TOKEN",
+    "EMAIL_PASSWORD",
+    "MATRIX_ACCESS_TOKEN",
+}
+
+
+def load(path):
+    values = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                values[key] = value
+    except FileNotFoundError:
+        pass
+    return values
+
+
+example = load(".env.example")
+current = load(".env")
+
+print("Current configuration (keys from .env.example, values from .env):\n")
+for key in example:
+    value = current.get(key, "")
+    if key in SENSITIVE:
+        display = f"{value[:4]}...(hidden)" if value else "(not set)"
+    else:
+        display = value if value else "(not set)"
+    print(f"  {key:<28} {display}")
+PYEOF
+}
+
+set_config() {
+  local kv="${1:-}"
+  if [[ "$kv" != *=* ]]; then
+    echo "Usage: ./start.sh --set KEY=VALUE" >&2
+    exit 1
+  fi
+  local key="${kv%%=*}"
+  local value="${kv#*=}"
+  if [ ! -f .env ]; then
+    cp .env.example .env
+  fi
+  python3 - "$key" "$value" <<'PYEOF'
+import sys
+
+key, value = sys.argv[1], sys.argv[2]
+path = ".env"
+
+with open(path) as f:
+    lines = f.readlines()
+
+found = False
+for i, line in enumerate(lines):
+    if line.startswith(f"{key}="):
+        lines[i] = f"{key}={value}\n"
+        found = True
+        break
+if not found:
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    lines.append(f"{key}={value}\n")
+
+with open(path, "w") as f:
+    f.writelines(lines)
+PYEOF
+  echo "==> Set ${key} in .env."
+}
+
+case "${1:-}" in
+  --show-config)
+    show_config
+    exit 0
+    ;;
+  --set)
+    set_config "${2:-}"
+    exit 0
+    ;;
+esac
 
 MODE="docker"
 if [ "${1:-}" = "--native" ]; then

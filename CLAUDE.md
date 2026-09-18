@@ -352,3 +352,19 @@ added to `app/security/auth.py` alongside the existing `grant_permission`.
   correct `alembic_version` row.
 - Epics **#1** (database), **#2** (auth), **#3** (langgraph), **#5**
   (Admin API) are now fully closed — every sub-issue done and verified.
+- **#34 (start.sh config read/write)**: `--show-config` and `--set
+  KEY=VALUE` added, both thin wrappers over `.env`. **A real mistake
+  happened while verifying this, worth remembering**: `start.sh`
+  resolves its own directory from `BASH_SOURCE` and `cd`s there
+  internally — running it from a different working directory does
+  **not** sandbox it to that directory. The first verification attempt
+  assumed `cd`-ing into a scratch copy first would contain `--set`'s
+  writes there; instead it silently modified the real project `.env`
+  (`LLAMA_PORT`, `EMAIL_IMAP_HOST`, `API_SERVER_KEY` got clobbered with
+  test values). Caught immediately via the harness's file-change
+  notification, restored the correct values, then re-verified properly
+  by copying `start.sh` itself into the scratch directory so its own
+  path resolution stayed contained there. **Rule for next time**:
+  testing any script that derives its own working directory from its
+  source path requires copying the script into the sandbox, not just
+  `cd`-ing somewhere else before invoking it by absolute path.

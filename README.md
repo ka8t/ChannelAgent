@@ -66,6 +66,14 @@ missing) and fill in:
 must never be stored in the database either — see
 `app/security/encryption.py`.
 
+Instead of editing `.env` by hand, `start.sh` can read and change any
+of these variables directly:
+
+```bash
+./start.sh --show-config          # list every variable, secrets masked
+./start.sh --set LLAMA_PORT=8081  # add or update one variable in .env
+```
+
 ## Start
 
 Start `llama-server` natively on the Mac first (see Prerequisites and
