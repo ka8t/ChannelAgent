@@ -1,5 +1,39 @@
 # Project conventions
 
+## Session paused (2026-09-18) — resume briefing
+
+Paused at the user's request (out of usage credits until 2026-09-20).
+State at pause, verified facts, not narrative:
+
+- `git rev-parse HEAD` on `main` == `git rev-parse origin/main` for
+  **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
+  nothing uncommitted, nothing unpushed, in either repo.
+- GitHub issues: **30 closed, 5 open** (`gh issue list --repo
+  ka8t/ChannelAgent --state open/closed --json number | jq length`).
+- `pytest`: **24 passed, 0 failed**. `ruff check .`: 0 issues.
+- No stray processes (`llama-server`, pollers), no leftover Docker
+  containers/images — checked directly, all empty.
+- All P0-critical issues closed. Admin/agent/logging mechanics (#35)
+  P1 portion done (#36-#38, #41). Telegram (#27) and Email (#28) both
+  verified with real live round trips. Production VPS topology (#21)
+  verified with a real containerized Linux `llama-server`.
+
+**Open, in priority order, for next session:**
+1. **#29** Matrix adapter — P2, blocked on real credentials (the user
+   gave only a placeholder example: `@votre_bot:matrix.org`-style).
+2. **#39** Log search — P2, no blocker, ready to implement.
+3. **#40** Storage overview — P3, no blocker, ready to implement.
+4. Epics **#6** and **#35** stay open only because of the above.
+5. Franck's GitHub collaborator invite — blocked on his actual
+   username (his email has no discoverable GitHub account; the API
+   flatly rejects an email in place of a username).
+6. Open question from the user, not yet decided: whether to make
+   `ChannelAgent` public so the deprecation notice added to the public
+   `Hermes` repo actually resolves for outside readers.
+
+Read the rest of this file chronologically for the *why* behind any of
+the above — this section is only the *what's left*.
+
 - **Language: English only.** All code comments, scripts, Dockerfiles,
   and documentation must be written in English, regardless of the
   language used in conversation to work on this repo.
