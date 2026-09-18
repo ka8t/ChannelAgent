@@ -416,3 +416,63 @@ Epics **#1**, **#2**, **#3**, **#5**, **#7** are now all fully closed.
 Still open: **#4** (docker — blocked on #21's real VPS test), **#6**
 (channels — blocked on #28/#29, pending real Email/Matrix
 credentials).
+
+## New epic #35: agent lifecycle, access requests & audit trail (2026-09-18)
+
+**The user's stated actual goal**, in their own terms: prepare the
+complete backend mechanics to let a user create one or more autonomous
+agents, with an admin able to oversee/control all of it — end to end
+covering user management, access requests, per-agent action logs,
+search, and storage — all reachable through an **interactive console
+via `start.sh`** (`./start.sh --admin`, #41), not the HTTP Admin API
+alone. The actual admin *interface* (web dashboard or otherwise) is
+explicitly deferred; the CLI is the near-term front end.
+
+Not implemented yet — deliberately, per the user's explicit "ne
+l'implémente pas" — only planned as GitHub issues:
+- **#36** AccessRequest model + approve/deny flow (today, #12 just
+  silently denies an unrecognized identity — no way to ask for access)
+- **#37** Agent model — a `User` can own multiple named agents, not
+  just one shared assistant. **Open design question flagged in the
+  issue, not decided**: is an Agent channel-agnostic
+  (`thread_id = {channel}_{user_id}_{agent_id}`) or scoped to one
+  `ChannelIdentity`? Proposed channel-agnostic as the default reading
+  of "create one or more autonomous agents," but this changes the
+  already-shipped #16 thread_id scheme, so needs confirmation before
+  any code lands.
+- **#38** ActionLog — every inbound/outbound action, encrypted text
+  (same sensitivity class as `raw_address`, #9), attributed to
+  user+agent+channel: the actual "tracer toute action" requirement.
+- **#39** log search (P2), **#40** storage stats (P3).
+- **#41** the interactive console itself, tying the above together.
+
+**Core design principle stated in the epic, binding on all of #36-#41**:
+the CLI and the existing Admin API (#22-25) must call the *same*
+service-layer functions (`app/admin/`, not yet created) — never two
+separate implementations of the same DB logic. Whoever picks these up
+should add a function once and expose it from both places.
+
+## Matrix env vars renamed to match the user's convention (2026-09-18)
+
+`MATRIX_USER_ID`/`MATRIX_ACCESS_TOKEN` → `MATRIX_BOT_USER_ID`/
+`MATRIX_BOT_ACCESS_TOKEN` (`.env`, `.env.example`, `app/config.py`) —
+the user gave this exact naming when asking for the Matrix scaffolding
+to be added. Values are still empty; what was given was a placeholder
+example, not real credentials (#29 still needs a real homeserver/bot
+account to implement and verify live).
+
+**Checked Hermes for reusable Email credentials, per the user's
+request — found none.** `Hermes/macos-arm64/.env`'s `EMAIL_ADDRESS`/
+`EMAIL_PASSWORD`/`EMAIL_IMAP_HOST`/`EMAIL_SMTP_HOST` are all empty
+there too, matching the original audit finding (email was never
+actually configured in that deployment). Nothing to copy into this
+project's `.env`; #28 still needs real mailbox credentials.
+
+**Telegram config compared against Hermes**: `TELEGRAM_BOT_TOKEN`/
+`TELEGRAM_ALLOWED_USERS` already match. Hermes additionally has
+`TELEGRAM_HOME_CHANNEL`/`TELEGRAM_HOME_CHANNEL_NAME` (destination for
+cron/proactive messages) and `TELEGRAM_GROUP_ALLOWED_USERS`/
+`TELEGRAM_GROUP_ALLOWED_CHATS` (group-chat support) — **not** added
+here, since neither proactive/cron messaging nor group chats exist as
+features in ChannelAgent yet. Noted as a gap relative to Hermes, not
+copied as unused config; revisit if/when either feature gets built.

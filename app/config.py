@@ -49,10 +49,10 @@ class Settings(BaseSettings):
     email_username: str | None = Field(default=None, alias="EMAIL_USERNAME")
     email_password: str | None = Field(default=None, alias="EMAIL_PASSWORD")
 
-    # Matrix adapter
+    # Matrix adapter (#29, not yet implemented)
     matrix_homeserver_url: str | None = Field(default=None, alias="MATRIX_HOMESERVER_URL")
-    matrix_user_id: str | None = Field(default=None, alias="MATRIX_USER_ID")
-    matrix_access_token: str | None = Field(default=None, alias="MATRIX_ACCESS_TOKEN")
+    matrix_bot_user_id: str | None = Field(default=None, alias="MATRIX_BOT_USER_ID")
+    matrix_bot_access_token: str | None = Field(default=None, alias="MATRIX_BOT_ACCESS_TOKEN")
 
     # Admin API
     api_server_port: int = Field(default=8700, alias="API_SERVER_PORT")
