@@ -10,3 +10,4 @@ pydantic-settings
 cryptography
 python-telegram-bot
 matrix-nio
+httpx

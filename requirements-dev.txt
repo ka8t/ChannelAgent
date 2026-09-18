@@ -1,0 +1,6 @@
+# Test/dev-only tooling — not installed in the runtime Docker image
+# (Dockerfile only installs requirements.txt).
+-r requirements.txt
+pytest
+pytest-asyncio
+ruff
