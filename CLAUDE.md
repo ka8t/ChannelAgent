@@ -114,3 +114,44 @@ them. Labels mirror the priority scheme from `ka8t/AuditRust`
 labels. Start from the epics for the current picture; don't re-derive
 the plan here — `gh issue list --repo ka8t/ChannelAgent` is the source
 of truth for what's done vs. outstanding, this file is not.
+
+## P0 milestone: done (2026-09-18)
+
+All 8 `P0-critical` issues (#8, #9, #10, #12, #15, #16, #18, #19) are
+implemented and closed, each verified with a real run (SQLite file,
+mock LLM backend, `docker build`/`docker run`), not just written —
+see each issue's closing comment for what was actually tested and any
+bugs the verification caught. New files:
+
+- `app/db/models.py` — `User` / `ChannelIdentity` / `Permission`.
+  `ChannelIdentity.external_id` is the plaintext lookup key (a hashed
+  email for the email channel, via `app.security.hashing`); only
+  `raw_address` (email) is stored encrypted, since Fernet output can't
+  be queried by equality.
+- `app/db/types.py` — `EncryptedString`, a SQLAlchemy `TypeDecorator`
+  so encryption happens transparently at the ORM boundary.
+- `app/db/session.py` — async engine/session/`init_db()`.
+- `app/security/hashing.py` — `channel_identifier_key()`, shared by
+  the Auth Node and `app/graph.py` so the DB lookup key and the
+  LangGraph `thread_id` can never drift apart for the same identity.
+- `app/security/auth.py` — `authorize()`, fail-closed.
+- `app/graph.py` — the LangGraph orchestrator. Uses
+  `Annotated[list[BaseMessage], add_messages]` as the state's
+  `messages` field — **not optional**: without that reducer, every new
+  turn replaces the checkpointed history instead of appending to it,
+  silently erasing prior conversation. `MemorySaver` is in-process
+  only (no restart-durability yet — acceptable per the epic's own
+  scope note, revisit if that assumption changes).
+- `Dockerfile` (`python:3.12-slim`, not the newest interpreter, so
+  every dependency has a prebuilt wheel), `.dockerignore`,
+  `docker-compose.yml`, `app/main.py` (minimal entrypoint — no channel
+  adapters wired in yet, that's epic #6).
+- `requirements.txt` gained `greenlet` (SQLAlchemy's async engine needs
+  it explicitly; not always pulled in transitively) — found by a real
+  `MissingGreenlet` failure during verification, not by inspection.
+
+`host.docker.internal:8080` reachability from inside a container was
+verified against a mock server (documented on #20, left open — that
+still needs a real `llama-server` to close properly).
+
+Next up: the `P1-high` issues (#13, #14, #17, #20, #22-24, #26-27).

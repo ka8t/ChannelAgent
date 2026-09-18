@@ -27,9 +27,14 @@ class Settings(BaseSettings):
     llama_server_url: str = Field(
         default="http://host.docker.internal:8080", alias="LLAMA_SERVER_URL"
     )
+    llama_ctx_size: int = Field(default=65536, alias="LLAMA_CTX_SIZE")
+    model_file: str | None = Field(default=None, alias="MODEL_FILE")
 
     # Telegram adapter
     telegram_bot_token: str | None = Field(default=None, alias="TELEGRAM_BOT_TOKEN")
+    # Bootstrap only (#14) — never consulted by the Auth Node (#12) after
+    # the first admin user has been seeded from it.
+    telegram_allowed_users: str | None = Field(default=None, alias="TELEGRAM_ALLOWED_USERS")
 
     # Email adapter
     email_imap_host: str | None = Field(default=None, alias="EMAIL_IMAP_HOST")

@@ -3,6 +3,7 @@ langchain-core
 fastapi
 uvicorn[standard]
 sqlalchemy
+greenlet
 aiosqlite
 pydantic
 pydantic-settings

@@ -1,0 +1,15 @@
+# Local development compose file (#19). Production topology (VPS,
+# containerized inference backend) is a separate compose file — see
+# issue #21, not implemented yet.
+services:
+  channelagent:
+    build: .
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+    # host.docker.internal resolves automatically on Docker Desktop
+    # (macOS/Windows); this makes it resolve on Linux Docker Engine too,
+    # for parity with a Linux dev machine. See docs/ARCHITECTURE.md.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
