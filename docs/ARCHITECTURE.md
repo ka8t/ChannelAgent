@@ -52,8 +52,8 @@ graph TD
             LL_MAC[llama-server native Mac<br/>Port 8080 / Context 65536]
         end
         subgraph ProdVPS [Production VPS Linux Deployment]
-            DOCKER_LLM[Ollama or vLLM Container]
-            LINUX_COMP[Linux CPU/CUDA Acceleration]
+            DOCKER_LLM[Containerized llama-server<br/>CPU threads, port 8080]
+            LINUX_COMP[Linux CPU Acceleration]
         end
     end
 
@@ -163,9 +163,20 @@ and user identity, e.g.:
   directly on the Mac host (Metal acceleration), listening on port
   8080 with a 65536-token context. The Linux Docker container reaches
   it via `host.docker.internal:8080`, not `localhost`.
-- **Production VPS**: an Ollama or vLLM container serves inference over
-  the internal Docker network, running on Linux CPU/CUDA acceleration
-  instead of the Mac-only `llama-server` binary.
+- **Production VPS**: a containerized `llama-server` (same binary, same
+  flags as the Mac's — no `-ngl` GPU offload, CPU threads instead)
+  serves inference over the internal Docker network, port 8080. See
+  `docker-compose.prod.yml` and `docker/llama-server.Dockerfile`
+  (#21). **Decided over Ollama/vLLM**, this diagram's original
+  design, after auditing the legacy Hermes project's own production
+  setup: Hermes previously ran `llama-swap` in front of `llama-server`
+  for a "swap models at runtime" feature this project never uses, and
+  `llama-swap`'s own separate, untracked update lifecycle let its VPS
+  silently run a two-week-stale `llama-server` through a real
+  incident. A single always-loaded model, containerized directly,
+  needs none of that — and keeps the exact same OpenAI-compatible
+  endpoint shape `app/graph.py` already talks to on the Mac, so dev and
+  prod run identical inference code paths, not two.
 
 The application code that calls the LLM gateway does not need to know
 which topology it is running against — only the base URL

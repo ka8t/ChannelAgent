@@ -118,6 +118,44 @@ This should print `pong` (or close to it, depending on the model) —
 proof the container reached `host.docker.internal:8080` and got a real
 completion back, not just that the TCP port is open.
 
+## Production deployment (VPS)
+
+`docker-compose.prod.yml` adds a containerized `llama-server` on the
+internal Docker network instead of relying on the Mac's native one —
+see `docs/ARCHITECTURE.md`'s "Compute topology" for why a containerized
+`llama-server` was chosen over Ollama/vLLM. Use it alongside the base
+compose file, not instead of it:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+```
+
+Requires, set in `.env`:
+
+- `MODELS_DIR` — directory containing the `.gguf` model file.
+- `LLAMA_SERVER_BIN_DIR` — directory containing a prebuilt Linux
+  `llama-server` binary (obtaining one is a separate concern from this
+  topology — the legacy Hermes project's
+  `linux-x86_64-vps/scripts/download-prebuilt-llama-server.sh` is a
+  working reference if useful).
+- `MODEL_FILE`, already used by the Mac dev setup.
+- `LLAMA_THREADS` (default 4) — CPU thread count; there is no GPU
+  offload flag in this topology, unlike the Mac's Metal setup.
+
+`docker compose -f docker-compose.yml -f docker-compose.prod.yml
+config` fails with a clear message naming whichever of these isn't set
+— confirmed directly, not just documented.
+
+This has been verified as far as this development environment allows:
+the compose file's merge resolves correctly (confirmed via `config`,
+`LLAMA_SERVER_URL` correctly becomes `http://llama-server:8080` and
+`channelagent` correctly waits on `llama-server`'s healthcheck) and
+`docker/llama-server.Dockerfile` builds. **Not yet verified**: an
+actual inference round trip through this topology — that needs a real
+Linux `llama-server` binary and a Linux Docker host, neither available
+in this environment (the Mac's own `llama-server` binary is macOS-only
+and won't run in this container).
+
 ## Database migrations
 
 Schema changes are tracked with [Alembic](https://alembic.sqlalchemy.org/)

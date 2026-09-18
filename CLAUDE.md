@@ -368,3 +368,28 @@ added to `app/security/auth.py` alongside the existing `grant_permission`.
   testing any script that derives its own working directory from its
   source path requires copying the script into the sandbox, not just
   `cd`-ing somewhere else before invoking it by absolute path.
+
+## #21 (VPS topology): decided, implemented, left open
+
+**Decision, confirmed with the user, overriding docs/ARCHITECTURE.md's
+original wording**: production VPS inference is a containerized
+`llama-server` (`docker-compose.prod.yml`,
+`docker/llama-server.Dockerfile`), not Ollama/vLLM. Reason: auditing
+Hermes's actual VPS setup found it deliberately dropped a
+`llama-swap`-style multi-engine layer after a real incident (a stale
+image running silently for two weeks because that layer's update
+lifecycle was untracked) — a single always-loaded model needs none of
+that, and staying on the same `llama-server` binary/flags/endpoint as
+the Mac keeps dev and prod on identical inference code paths.
+`docs/ARCHITECTURE.md` and `README.md` updated in the same change, per
+this repo's own convention.
+
+**Left open, not closed**: `docker compose config` confirms the
+topology resolves correctly (right `LLAMA_SERVER_URL`, right
+`depends_on`, no app code changes needed) and the Dockerfile builds,
+but there is no way to verify an actual inference round trip from this
+environment — that needs a real Linux `llama-server` binary and a
+Linux Docker host, neither available here (the Mac's binary is
+macOS-only). Close this only after that real test, mirroring how #20
+was handled (documented partial verification first, full closure only
+once a real end-to-end run was possible).
