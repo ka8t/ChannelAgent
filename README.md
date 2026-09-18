@@ -130,9 +130,12 @@ completion back, not just that the TCP port is open.
 - **`telegram.error.Conflict: terminated by other getUpdates
   request`**: Telegram allows only one long-polling connection per bot
   token. `TELEGRAM_BOT_TOKEN` is deliberately reused from the legacy
-  Hermes project (same physical bot) — if Hermes's own Telegram gateway
-  is still running anywhere (locally or on a VPS), stop it before
-  starting ChannelAgent's, or the two will fight over the same token.
+  Hermes project (same physical bot). Hermes's local gateway
+  (`ai.hermes.gateway`, a launchd service) has since been disabled on
+  this Mac — see `CLAUDE.md`'s "Operational finding" note for the
+  exact commands — but if Hermes is ever running anywhere else with
+  this same token (e.g. redeployed on a VPS), stop it first, or the two
+  will fight over the connection.
 
 ## Sources
 

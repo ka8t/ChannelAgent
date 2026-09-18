@@ -255,11 +255,23 @@ nothing running.
   confirmed server-side (`getUpdates` → real LLM call → `sendMessage`,
   all 200 OK) and by the user explicitly confirming they received the
   reply on their own device.
-- **Operational finding, not a code bug**: a leftover local Hermes
-  process (port 8645) was still polling the same
-  `TELEGRAM_BOT_TOKEN` during this test, causing intermittent
-  `Conflict: terminated by other getUpdates request` errors — Telegram
-  allows only one long-polling connection per bot token. **Hermes's own
-  Telegram gateway must be stopped before running ChannelAgent's**, in
-  any environment where they'd otherwise share this token (deliberately
-  reused, same physical bot — see the `.env` security notes above).
+- **Operational finding, resolved same-session**: a local Hermes
+  gateway process (`hermes_cli.main gateway run`, port 8645) was still
+  polling the same `TELEGRAM_BOT_TOKEN` during this test, causing
+  intermittent `Conflict: terminated by other getUpdates request`
+  errors — Telegram allows only one long-polling connection per bot
+  token. **The user confirmed Hermes is no longer used**, so both its
+  launchd services were disabled (not just killed, which
+  `KeepAlive: true` on `ai.hermes.gateway.plist` would have
+  auto-restarted):
+  ```
+  launchctl unload -w ~/Library/LaunchAgents/ai.hermes.gateway.plist
+  launchctl unload -w ~/Library/LaunchAgents/com.hermes.silent-failure-watchdog.plist
+  ```
+  Confirmed both fully stopped (`launchctl list`, `lsof -i :8645`, `ps
+  aux` all empty afterward) and won't restart at next login (`-w`
+  persists the disable). The `.plist` files themselves were left in
+  place, not deleted — re-enabling Hermes later, if ever needed, is a
+  `launchctl load -w` away. No further token-sharing conflict is
+  expected going forward; if it recurs, something restarted Hermes
+  outside this change.
