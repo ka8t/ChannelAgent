@@ -16,12 +16,35 @@
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
 - **Never close a GitHub issue unless it is actually implemented and
-  verified.** Rule from the user (2026-09-18). A closing comment must
-  describe a real check that was actually run (a test, a build, an
-  end-to-end call) against the current code, not a description of
-  intent. If re-checking a closed issue later finds the claim doesn't
-  hold, reopen it — don't leave it closed and just fix the code
-  silently.
+  verified — and verification means numbers, not narrative.** Two
+  rules from the user, the second sharpening the first (2026-09-18):
+  1. A closing comment must describe a real check that was actually
+     run (a test, a build, an end-to-end call) against the current
+     code, not a description of intent. If re-checking a closed issue
+     later finds the claim doesn't hold, reopen it — don't leave it
+     closed and just fix the code silently.
+  2. **"I ran it and it worked" is not proof by itself — cite exact
+     figures.** User's own words: "tu fermes toujours les issues sans
+     avoir de chiffres et de preuves formelles, je ne crois pas sur
+     paroles. Je veux des faits." Every closing comment must include
+     concrete, checkable numbers: `pytest: N passed, 0 failed` (not
+     "tests pass"), an exact exit code (not "the build succeeds"), a
+     row count from an actual query (not "the record was created"), an
+     HTTP status code (not "auth works"). A prose description of what
+     was checked is not sufficient on its own, even when the check was
+     real — the reported number is the artifact that makes it checkable.
+- **Verify on the Mac natively first, always, before a VPS/remote or
+  GPU-less environment.** User's instruction (2026-09-18): the Mac is
+  faster to iterate against (Metal acceleration) — confirm there
+  first, then confirm once more on the slower/remote target, never the
+  reverse and never only the remote one. Mirrors the legacy Hermes
+  project's own documented "Mac first, then VPS" workflow convention
+  — carried forward here as a binding rule, not just historical
+  context. (#21's production-topology test followed this pattern
+  correctly by using this Mac's own Docker Desktop rather than seeking
+  out a real VPS — worth remembering as the template: local Docker's
+  Linux VM often substitutes for "needs Linux," it doesn't have to
+  mean "needs a remote machine.")
 - **`start.sh` must manage every application variable, and must never
   drift from `.venv`.** Two standing requirements from the user
   (2026-09-18), binding on any future change to `start.sh`:
