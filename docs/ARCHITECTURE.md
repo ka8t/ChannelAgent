@@ -132,6 +132,18 @@ encryption key is loaded at runtime from `.env` (`ENCRYPTION_KEY`) and
 is never stored in the database and never committed to Git. See
 `app/security/encryption.py`.
 
+### Database and migrations
+
+SQLite via SQLAlchemy (async, `aiosqlite`) — matches the "100% local"
+requirement with zero extra infrastructure. `DATABASE_URL` in `.env`
+is the only thing that would change to move to Postgres later.
+
+Schema changes are tracked with [Alembic](https://alembic.sqlalchemy.org/)
+(`alembic/versions/`), not `Base.metadata.create_all` — `init_db()`
+(`app/db/session.py`) runs `alembic upgrade head` at every startup, so
+a schema change never requires dropping the database. See `README.md`'s
+"Database migrations" section for the day-to-day workflow.
+
 ### LangGraph orchestrator
 
 A single `StateGraph` workflow (`app/graph.py`, to be implemented)

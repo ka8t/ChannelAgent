@@ -322,3 +322,33 @@ added to `app/security/auth.py` alongside the existing `grant_permission`.
   `curl` from the host — 401 without the key, 200 with the real
   `API_SERVER_KEY` from `.env`, returning the real bootstrap admin
   (id 7231548225) created by #14 in the same running instance.
+
+## P2 progress (2026-09-18)
+
+- **#30/#31 (tests)**: `tests/` + `pyproject.toml`
+  (`asyncio_mode = "auto"`) + `requirements-dev.txt` (pytest,
+  pytest-asyncio, ruff — not installed in the runtime image). 8 tests,
+  all passing: encryption round-trip + corrupted/wrong-key failure
+  modes, and 5 Auth Node cases against a real temp-file DB (including
+  an inactive-user-with-a-permission case no earlier ad hoc script had
+  covered).
+- **#11 (Alembic)**: `init_db()` (`app/db/session.py`) now runs
+  `alembic upgrade head` at every startup instead of calling
+  `Base.metadata.create_all` directly. `alembic/env.py` pulls
+  `DATABASE_URL` from `app.config.get_settings()`, never a hardcoded
+  `alembic.ini` value. **Real autogenerate bug found and fixed**: the
+  generated initial migration referenced `app.db.types.EncryptedString`
+  without importing it — would have `NameError`'d if applied as
+  generated (a known Alembic limitation with custom column types, now
+  called out in `README.md`'s migration workflow section as the thing
+  to check on every autogenerate). Verified the migrated schema is
+  structurally identical to the old `create_all` one (PRAGMA
+  comparison, not just "it ran"), and that an incremental model change
+  produces a correctly-scoped follow-up migration, not a full rebuild.
+  **`Dockerfile` was missing `alembic.ini`/`alembic/`** — only copied
+  `app/`, so migrations would have been entirely absent from the
+  image; fixed and reverified with a real `docker build` + `docker
+  run`, confirming the container's real `data/channelagent.db` has a
+  correct `alembic_version` row.
+- Epics **#1** (database), **#2** (auth), **#3** (langgraph), **#5**
+  (Admin API) are now fully closed — every sub-issue done and verified.

@@ -11,6 +11,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app/ ./app/
+# Alembic migrations (#11) — app/db/session.py's init_db() runs these
+# at startup, so both must be present in the image, not just alembic
+# the Python package.
+COPY alembic.ini .
+COPY alembic/ ./alembic/
 
 # Real data (SQLite file) lives here — mount a volume over it in
 # docker-compose.yml so it survives container recreation.

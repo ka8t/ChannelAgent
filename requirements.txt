@@ -5,6 +5,7 @@ uvicorn[standard]
 sqlalchemy
 greenlet
 aiosqlite
+alembic
 pydantic
 pydantic-settings
 cryptography

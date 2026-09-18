@@ -4,6 +4,7 @@ Single place the rest of the app (Auth Node, Admin API) gets a DB
 session from, so nothing else constructs its own engine.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -13,7 +14,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
-from app.db.models import Base
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _ensure_sqlite_dir_exists(database_url: str) -> None:
@@ -41,16 +43,31 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(get_engine(), expire_on_commit=False)
 
 
-async def init_db() -> None:
-    """Create any missing tables. Safe to call on every startup.
+def _run_migrations_sync(database_url: str) -> None:
+    # alembic's Config/command API is synchronous, and env.py's own
+    # run_migrations_online() calls asyncio.run() internally — calling
+    # it directly from inside app/main.py's already-running event loop
+    # would raise "asyncio.run() cannot be called from a running event
+    # loop". init_db() below runs this in a separate thread instead.
+    from alembic.command import upgrade
+    from alembic.config import Config
 
-    A stopgap until #11 (Alembic) replaces this with real migrations —
-    fine for evolving an empty/dev database, not for altering an
-    existing one in place.
+    cfg = Config(str(_REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    upgrade(cfg, "head")
+
+
+async def init_db() -> None:
+    """Applies all Alembic migrations up to head (#11). Safe to call on
+    every startup — Alembic no-ops if the DB is already current.
+    Replaced calling Base.metadata.create_all directly: schema changes
+    now go through real migrations (alembic/versions/), tracked by
+    revision, instead of requiring the DB to be dropped and recreated.
     """
-    engine = get_engine()
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    database_url = get_settings().database_url
+    _ensure_sqlite_dir_exists(database_url)
+    await asyncio.to_thread(_run_migrations_sync, database_url)
 
 
 @asynccontextmanager

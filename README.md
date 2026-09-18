@@ -110,6 +110,37 @@ This should print `pong` (or close to it, depending on the model) —
 proof the container reached `host.docker.internal:8080` and got a real
 completion back, not just that the TCP port is open.
 
+## Database migrations
+
+Schema changes are tracked with [Alembic](https://alembic.sqlalchemy.org/)
+(`alembic/versions/`), not `Base.metadata.create_all`. `app/db/session.py`'s
+`init_db()` runs `alembic upgrade head` at every startup — normal use
+never requires a manual migration step.
+
+When you change a model in `app/db/models.py`:
+
+```bash
+source .venv/bin/activate
+alembic revision --autogenerate -m "describe the change"
+```
+
+Then **read the generated file in `alembic/versions/`** before
+committing it — autogenerate gets the SQL right but not always the
+Python: it has already once emitted a reference to a custom column
+type (`app.db.types.EncryptedString`) without importing it, which
+would fail at migration time with a `NameError` if applied as-is.
+Apply it locally to confirm it works:
+
+```bash
+alembic upgrade head
+```
+
+`alembic.ini`'s `sqlalchemy.url` is a placeholder — `alembic/env.py`
+overrides it from `.env`'s `DATABASE_URL` at runtime (via
+`app.config.get_settings()`), the same setting the application itself
+uses, so a migration can never accidentally target a different
+database than the app runs against.
+
 ## Troubleshooting
 
 - **`ENCRYPTION_KEY is missing or empty`** (from `start.sh` or
