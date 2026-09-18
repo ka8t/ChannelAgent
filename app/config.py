@@ -12,7 +12,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": .env also carries shell-only variables start.sh
+    # reads directly (LLAMA_SERVER_BIN, MODELS_DIR, LLAMA_PORT — used to
+    # auto-start a native llama-server, never by this Python process).
+    # Without this, adding one of those breaks Settings() with "Extra
+    # inputs are not permitted" for a variable the app never touches.
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Application-layer encryption (see app/security/encryption.py)
     encryption_key: str = Field(..., alias="ENCRYPTION_KEY")

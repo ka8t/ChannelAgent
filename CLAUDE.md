@@ -154,4 +154,30 @@ bugs the verification caught. New files:
 verified against a mock server (documented on #20, left open — that
 still needs a real `llama-server` to close properly).
 
-Next up: the `P1-high` issues (#13, #14, #17, #20, #22-24, #26-27).
+Next up: the `P1-high` issues (#13, #14, #17, #22-24, #26-27).
+
+## #20 closed, and start.sh fixed (2026-09-18)
+
+- **#20 closed for real**: started the actual native llama-server
+  (Hermes's binary/model/flags), confirmed it directly, then ran
+  `app.graph.run_turn()` — the real code path, not a curl — inside the
+  actual container and got a real completion back over
+  `host.docker.internal:8080`. Documented as a reproducible check in
+  `README.md`'s Verify section.
+- **start.sh now auto-starts llama-server** instead of just warning
+  (using `LLAMA_SERVER_BIN`/`MODELS_DIR`/`MODEL_FILE`/`LLAMA_PORT`,
+  new `.env` variables — shell-only, never read by the Python app;
+  `app/config.py` gained `extra="ignore"` so unknown `.env` vars don't
+  break `Settings()`), and takes `--native` to run the app directly via
+  a local venv instead of Docker. **The two modes need different
+  `LLAMA_SERVER_URL`s** (`host.docker.internal` only resolves inside a
+  container) — `--native` overrides it to `localhost` explicitly,
+  Docker mode leaves `.env`'s value alone. Untracked as its own issue
+  before (#33, created and closed same-session with the fix).
+- **Real bug found while verifying `--native`** (the first time the
+  app ran outside Docker): `app/db/session.py`'s `init_db()` never
+  created the parent directory for a relative SQLite path — invisible
+  under Docker because the `Dockerfile`/`docker-compose.yml` happen to
+  pre-create `data/`. Fixed with `_ensure_sqlite_dir_exists()` in that
+  same file, not by having `start.sh` paper over it with an extra
+  `mkdir`.
