@@ -105,6 +105,23 @@ replaces the legacy `ALLOWED_USERS` static string check with a runtime
 database lookup, allowing users and permissions to be added, revoked,
 or scoped without restarting the container.
 
+### Roles and permissions
+
+A `User` (platform-independent) has one `ChannelIdentity` per
+`(channel, external_id)` it's known by. `Permission` is a separate
+table, not a column: each row is `(channel_identity_id, kind)` with
+`kind` one of `chat` (may talk to the agent) or `admin` (may also
+manage other users through the Admin API — see below). Granting is
+inserting a row, revoking is deleting one; there is no third "no
+permission" state to reconcile.
+
+Permissions are scoped to the `ChannelIdentity`, not the `User` —
+the same person can hold `admin` on their Telegram identity while
+their Email identity only has `chat`, or none at all. The Auth Node's
+decision (`app/security/auth.py::authorize`) is always evaluated
+against the specific `(channel, user_id)` pair a message arrived on,
+never against the user's permissions on other channels.
+
 ### Application-layer encryption
 
 Sensitive fields (raw email addresses, Matrix access tokens, other

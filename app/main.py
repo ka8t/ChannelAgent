@@ -12,7 +12,8 @@ import asyncio
 import logging
 
 from app.config import get_settings
-from app.db.session import init_db
+from app.db.bootstrap import bootstrap_admin_from_env
+from app.db.session import init_db, session_scope
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("channelagent")
@@ -21,6 +22,8 @@ logger = logging.getLogger("channelagent")
 async def main() -> None:
     settings = get_settings()
     await init_db()
+    async with session_scope() as session:
+        await bootstrap_admin_from_env(session)
     logger.info("ChannelAgent started. LLM gateway: %s", settings.llama_server_url)
     logger.info("No channel adapters are wired in yet (see epic #6 on the issue tracker).")
     # Keeps the process alive instead of exiting immediately — replaced by
