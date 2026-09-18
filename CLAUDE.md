@@ -15,6 +15,22 @@
 - **Secrets**: never commit `.env` or key material. `ENCRYPTION_KEY`
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
+- **`start.sh` must manage every application variable, and must never
+  drift from `.venv`.** Two standing requirements from the user
+  (2026-09-18), binding on any future change to `start.sh`:
+  1. It must let you read and modify every variable the application
+     actually needs (the set in `.env.example`), not just bootstrap
+     `.env` once on first run and leave the rest to manual editing.
+     **Not implemented yet** — tracked as
+     [#34](https://github.com/ka8t/ChannelAgent/issues/34).
+  2. Its `--native` path must always stay synchronized with `.venv`:
+     whatever it installs/checks must match `requirements.txt`
+     exactly, every run. **Already true** — `pip install -r
+     requirements.txt` runs unconditionally on every native run,
+     whether `.venv` is new or reused, so it can't silently drift.
+     Keep this property whenever `start.sh` changes; it doesn't need
+     its own ticket, just don't regress it (e.g. don't gate the
+     install behind an `if [ ! -d .venv ]` check).
 
 ## What this project is
 
