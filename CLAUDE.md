@@ -521,6 +521,12 @@ earlier this session.
   build` + `docker run` per batch confirming the actual containerized
   DB gets the right tables/columns.
 
-Remaining from #35: **#41** (interactive CLI — the most code, depends
-on all of the above), **#39** (log search, P2), **#40** (storage
-overview, P3). Not started — next up if/when resumed.
+**#41 done too**: `app/admin/cli.py` + `./start.sh --admin` (new
+`setup_venv()` shared with native mode; skips llama-server entirely —
+the console makes no LLM calls). Verified both via scripted-`input()`
+pytest (3 tests — CLI approval matches a direct service-layer call
+exactly) and a real end-to-end run of `./start.sh --admin` itself with
+piped input, not just the Python module in isolation. 19 tests total,
+ruff clean. P1 portion of #35 (#36-#38, #41) is now fully done; only
+**#39** (log search, P2) and **#40** (storage overview, P3) remain
+open on the epic.

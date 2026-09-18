@@ -16,6 +16,10 @@
 #                                      .env value (secrets masked)
 #   ./start.sh --set KEY=VALUE     -> add or update one variable in .env
 #
+# Plus the interactive admin console (#41) — users, access requests,
+# agents, action logs — over the local venv, no llama-server needed:
+#   ./start.sh --admin
+#
 # Both run modes need a native llama-server running on this Mac first
 # (Metal-accelerated inference). If it isn't already reachable on
 # LLAMA_PORT, this script starts it itself, using LLAMA_SERVER_BIN /
@@ -123,9 +127,10 @@ case "${1:-}" in
 esac
 
 MODE="docker"
-if [ "${1:-}" = "--native" ]; then
-  MODE="native"
-fi
+case "${1:-}" in
+  --native) MODE="native" ;;
+  --admin) MODE="admin" ;;
+esac
 
 echo "==> ChannelAgent start.sh (mode: $MODE)"
 
@@ -145,6 +150,24 @@ set -a
 # shellcheck disable=SC1091
 source .env
 set +a
+
+setup_venv() {
+  if [ ! -d .venv ]; then
+    echo "==> Creating virtualenv (.venv)"
+    python3 -m venv .venv
+  fi
+  # shellcheck disable=SC1091
+  source .venv/bin/activate
+  echo "==> Installing dependencies"
+  pip install --quiet --upgrade pip
+  pip install --quiet -r requirements.txt
+}
+
+# --- Admin console: pure DB/CLI, no llama-server needed at all ---
+if [ "$MODE" = "admin" ]; then
+  setup_venv
+  exec python3 -m app.admin.cli
+fi
 
 # --- 2. Native llama-server: reuse it if running, start it if not (macOS only) ---
 LLAMA_PORT="${LLAMA_PORT:-8080}"
@@ -202,15 +225,7 @@ if [ "$MODE" = "docker" ]; then
 fi
 
 # --- native mode ---
-if [ ! -d .venv ]; then
-  echo "==> Creating virtualenv (.venv)"
-  python3 -m venv .venv
-fi
-# shellcheck disable=SC1091
-source .venv/bin/activate
-echo "==> Installing dependencies"
-pip install --quiet --upgrade pip
-pip install --quiet -r requirements.txt
+setup_venv
 
 # Running outside Docker: host.docker.internal does not resolve here.
 # Override regardless of what .env says, so --native doesn't silently
