@@ -61,6 +61,17 @@ class PermissionKind(enum.StrEnum):
     ADMIN = "admin"
 
 
+class Direction(enum.StrEnum):
+    INBOUND = "inbound"
+    OUTBOUND = "outbound"
+
+
+class RequestStatus(enum.StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    DENIED = "denied"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -106,3 +117,45 @@ class Permission(Base):
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     channel_identity: Mapped["ChannelIdentity"] = relationship(back_populates="permissions")
+
+
+class ActionLog(Base):
+    """Per-user, per-agent audit trail (#38). agent_id is a plain nullable
+    int, not a ForeignKey, until #37's Agent table exists — add the FK
+    via a migration then, don't backfill it by hand.
+    """
+
+    __tablename__ = "action_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    agent_id: Mapped[int | None] = mapped_column(default=None)
+    channel: Mapped[Channel] = mapped_column(_db_enum(Channel), nullable=False)
+    direction: Mapped[Direction] = mapped_column(_db_enum(Direction), nullable=False)
+    # Conversation content — same sensitivity class as ChannelIdentity.raw_address.
+    text: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+
+
+class AccessRequest(Base):
+    """An unrecognized identity asking for access (#36) — created instead
+    of only silently denying (see app/security/auth.py). Upserted, not
+    inserted per message: one pending row per (channel, external_id).
+    """
+
+    __tablename__ = "access_requests"
+    __table_args__ = (
+        UniqueConstraint("channel", "external_id", name="uq_request_channel_external_id"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    channel: Mapped[Channel] = mapped_column(_db_enum(Channel), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_message_text: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    status: Mapped[RequestStatus] = mapped_column(
+        _db_enum(RequestStatus), nullable=False, default=RequestStatus.PENDING
+    )
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
