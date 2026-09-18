@@ -594,3 +594,46 @@ ChannelAgent is private — the notice's link is currently unreachable
 for anyone without repo access. Needs the user's call on whether to
 make ChannelAgent public (their decision, not made unilaterally here —
 see the earlier visibility discussion this session).
+
+## ChannelAgent collaborators (2026-09-18)
+
+- **Brian** (`brian@fraval.org`) added as a read-only collaborator —
+  GitHub account found via public-email search (`hitweb`), invitation
+  confirmed via the API response (`invitee: hitweb`, `permissions:
+  read`, invitation id `333656994`).
+- **Franck** (`franck@fptarget.org`) — **not added**. No GitHub
+  account resolvable from that email (0 results from both a public-
+  profile-email search and a public-commit-author-email search), and
+  GitHub's personal-repo collaborator API only accepts a username, not
+  an email (confirmed directly: `PUT .../collaborators/franck@fptarget.org`
+  → `404 Not Found`). Needs his actual GitHub username from the user.
+
+## #28 (Email adapter) closed — real OVH mailbox (2026-09-18)
+
+Real credentials provided by the user for `contact@codefixture.com`
+(OVH, `ssl0.ovh.net`) — stored in `.env` only, never committed.
+`app/channels/email.py`: IMAP polling (stdlib `imaplib`) + SMTP reply
+(stdlib `smtplib.SMTP_SSL` — port 465 is **implicit SSL, not
+STARTTLS**, matters if this ever gets re-pointed at a different
+provider). `EMAIL_IMAP_HOST`/`PORT` were inferred (OVH's standard,
+same host as SMTP, port 993) since the user only gave SMTP details —
+confirmed correct by actually connecting, not left as a guess.
+
+**Live test used a dedicated test address (`montezuma@outlook.fr`),
+pre-authorized in the DB first** — specifically to avoid the adapter
+auto-replying to real customer emails in this live business mailbox
+(119 messages in INBOX) with the bot's rejection message during the
+test window. Poller was started, run only long enough to catch one
+real message, then stopped immediately — never left polling this
+mailbox unsupervised.
+
+**Evidence standard applied per the user's rule**: closed with exact
+`action_logs` row data queried directly from the real DB (row ids,
+timestamps, directions), not a description of "it worked" — see #28's
+closing comment. User confirmed receipt in the `montezuma@outlook.fr`
+inbox afterward.
+
+24 tests total now (`tests/test_email_adapter.py` added), ruff clean.
+Epic #6 still open — only #29 (Matrix) remains, still blocked on real
+credentials (the user gave only a placeholder example, see #29's
+existing comment).

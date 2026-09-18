@@ -34,7 +34,14 @@ async def main() -> None:
     else:
         logger.info("TELEGRAM_BOT_TOKEN not set — Telegram adapter disabled.")
 
-    # Email/Matrix adapters (#28, #29) join `tasks` here once they exist.
+    if settings.email_imap_host and settings.email_username and settings.email_password:
+        from app.channels.email import run_email_adapter
+
+        tasks.append(asyncio.create_task(run_email_adapter()))
+    else:
+        logger.info("Email IMAP/SMTP settings not fully set — Email adapter disabled.")
+
+    # Matrix adapter (#29) joins `tasks` here once it exists.
 
     if settings.api_server_key:
         import uvicorn
