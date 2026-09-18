@@ -530,3 +530,28 @@ piped input, not just the Python module in isolation. 19 tests total,
 ruff clean. P1 portion of #35 (#36-#38, #41) is now fully done; only
 **#39** (log search, P2) and **#40** (storage overview, P3) remain
 open on the epic.
+
+## #21 closed for real — all P0s done (2026-09-18)
+
+Earlier assumption was wrong: #21 (production VPS topology) doesn't
+actually need a real VPS to verify — **Docker Desktop's containers are
+real Linux** (via its VM), so any genuine Linux binary runs correctly
+in one even on this Mac. Downloaded the actual official llama.cpp
+Linux release (same asset Hermes's own download script fetches),
+reused a small model already present locally
+(`Hermes/linux-x86_64-vps/models/qwen2.5-0.5b-instruct-q4_k_m.gguf`),
+and ran the real prod compose topology
+(`--platform linux/amd64`) end to end: `llama-server` container
+reached Healthy, and inside the real running `channelagent` container,
+`app.graph.run_turn()` returned a real completion
+(`REPLY: Pong!`) with `LLAMA_SERVER_URL` confirmed as
+`http://llama-server:8080` (internal network, not
+`host.docker.internal`). Everything torn down afterward. **Lesson**:
+"needs a real VPS" was an unexamined assumption — check whether Docker
+Desktop's own Linux VM can satisfy a "needs Linux" requirement before
+concluding a test isn't possible in this environment.
+
+**All P0-critical issues are now closed** — epics #1, #2, #3, #4 all
+done. Every sub-issue verified with a real run at some point, not just
+code review; see each issue's closing comment for exactly what that
+was.
