@@ -127,6 +127,12 @@ completion back, not just that the TCP port is open.
   bytes`**: `ENCRYPTION_KEY` is in the wrong format — it must not be a
   hex string (e.g. a SHA-256 digest); it must be the base64 output of
   `Fernet.generate_key()` or the equivalent shown under Configure.
+- **`telegram.error.Conflict: terminated by other getUpdates
+  request`**: Telegram allows only one long-polling connection per bot
+  token. `TELEGRAM_BOT_TOKEN` is deliberately reused from the legacy
+  Hermes project (same physical bot) — if Hermes's own Telegram gateway
+  is still running anywhere (locally or on a VPS), stop it before
+  starting ChannelAgent's, or the two will fight over the same token.
 
 ## Sources
 

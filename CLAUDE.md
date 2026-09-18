@@ -233,3 +233,33 @@ rather than trusting the original closing comments:
 Result: all 10 closed issues held up. Nothing reopened. All test
 containers/images/processes/data removed afterward — this audit left
 nothing running.
+
+## P1 progress: #13, #14, #26, #17, #27 closed (2026-09-18)
+
+- **#13/#14**: the DB/auth schema from #8/#12 already supported
+  per-channel role scoping (`Permission` keys off `ChannelIdentity`,
+  not `User`) — documented in `docs/ARCHITECTURE.md`, verified the
+  same `User` can be admin on Telegram and merely a chat user on Email.
+  `app/db/bootstrap.py::bootstrap_admin_from_env()` seeds the first
+  admin from `TELEGRAM_ALLOWED_USERS` on an empty DB, verified
+  idempotent (a second boot doesn't duplicate it) and that
+  `TELEGRAM_ALLOWED_USERS` is genuinely never read again afterward.
+- **#26/#17**: `app/channels/schema.py::NormalizedEvent` carries a
+  `reply()` callback so `app/channels/dispatch.py::dispatch_event()`
+  can deliver a response without knowing which channel it came from —
+  the shared Auth-then-graph-then-reply pipeline every adapter calls.
+- **#27 (Telegram adapter)**: the first channel actually wired end to
+  end. **A real live test with the user**, not just code — started the
+  real app (real bootstrap admin, real Telegram long-polling, real
+  native `llama-server`), asked the user to message the real bot,
+  confirmed server-side (`getUpdates` → real LLM call → `sendMessage`,
+  all 200 OK) and by the user explicitly confirming they received the
+  reply on their own device.
+- **Operational finding, not a code bug**: a leftover local Hermes
+  process (port 8645) was still polling the same
+  `TELEGRAM_BOT_TOKEN` during this test, causing intermittent
+  `Conflict: terminated by other getUpdates request` errors — Telegram
+  allows only one long-polling connection per bot token. **Hermes's own
+  Telegram gateway must be stopped before running ChannelAgent's**, in
+  any environment where they'd otherwise share this token (deliberately
+  reused, same physical bot — see the `.env` security notes above).

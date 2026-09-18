@@ -25,12 +25,23 @@ async def main() -> None:
     async with session_scope() as session:
         await bootstrap_admin_from_env(session)
     logger.info("ChannelAgent started. LLM gateway: %s", settings.llama_server_url)
-    logger.info("No channel adapters are wired in yet (see epic #6 on the issue tracker).")
-    # Keeps the process alive instead of exiting immediately — replaced by
-    # real adapter event loops (Telegram polling, IMAP polling, Matrix
-    # sync) once they exist.
-    while True:
-        await asyncio.sleep(3600)
+
+    tasks = []
+    if settings.telegram_bot_token:
+        from app.channels.telegram import run_telegram_adapter
+
+        tasks.append(asyncio.create_task(run_telegram_adapter()))
+    else:
+        logger.info("TELEGRAM_BOT_TOKEN not set — Telegram adapter disabled.")
+
+    # Email/Matrix adapters (#28, #29) join `tasks` here once they exist.
+
+    if not tasks:
+        logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")
+        while True:
+            await asyncio.sleep(3600)
+    else:
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
