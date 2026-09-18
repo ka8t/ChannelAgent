@@ -578,3 +578,19 @@ concluding a test isn't possible in this environment.
 done. Every sub-issue verified with a real run at some point, not just
 code review; see each issue's closing comment for exactly what that
 was.
+
+## Hermes marked deprecated (2026-09-18)
+
+Per the user's instruction, `ka8t/Hermes` (public repo,
+`/Users/mac/Documents/Code/Hermes` locally) now carries a bilingual
+(EN/FR) deprecation notice at the top of its `README.md`, pointing to
+this repo, and its GitHub description was changed to
+`"DEPRECATED — buggy, unmaintained. See ka8t/ChannelAgent instead."`
+Pushed for real: commit `0d15191` on `origin/main`, 1 file changed, 36
+insertions — `git log`/`gh repo view` confirm both landed.
+
+**Open issue, flagged to the user, not resolved**: Hermes is public,
+ChannelAgent is private — the notice's link is currently unreachable
+for anyone without repo access. Needs the user's call on whether to
+make ChannelAgent public (their decision, not made unilaterally here —
+see the earlier visibility discussion this session).
