@@ -67,3 +67,20 @@ async def grant_permission(
     session.add(permission)
     await session.flush()
     return permission
+
+
+async def revoke_permission(
+    session: AsyncSession, channel_identity: ChannelIdentity, kind: PermissionKind
+) -> bool:
+    """Returns False if the permission wasn't held (nothing to revoke),
+    True if a row was actually deleted — lets the Admin API (#24) tell
+    a caller "already didn't have it" apart from a real change."""
+    stmt = select(Permission).where(
+        Permission.channel_identity_id == channel_identity.id, Permission.kind == kind
+    )
+    existing = (await session.execute(stmt)).scalar_one_or_none()
+    if existing is None:
+        return False
+    await session.delete(existing)
+    await session.flush()
+    return True

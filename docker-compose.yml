@@ -5,6 +5,10 @@ services:
   channelagent:
     build: .
     env_file: .env
+    ports:
+      # Admin API (#22) — only reachable at all once API_SERVER_KEY is
+      # set in .env, which also enables it inside app/main.py.
+      - "${API_SERVER_PORT:-8700}:${API_SERVER_PORT:-8700}"
     volumes:
       - ./data:/app/data
     # host.docker.internal resolves automatically on Docker Desktop

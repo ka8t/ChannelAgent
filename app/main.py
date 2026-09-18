@@ -36,6 +36,19 @@ async def main() -> None:
 
     # Email/Matrix adapters (#28, #29) join `tasks` here once they exist.
 
+    if settings.api_server_key:
+        import uvicorn
+
+        from app.api.app import app as admin_api_app
+
+        config = uvicorn.Config(
+            admin_api_app, host="0.0.0.0", port=settings.api_server_port, log_level="info"
+        )
+        tasks.append(asyncio.create_task(uvicorn.Server(config).serve()))
+        logger.info("Admin API starting on port %s.", settings.api_server_port)
+    else:
+        logger.info("API_SERVER_KEY not set — Admin API disabled.")
+
     if not tasks:
         logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")
         while True:

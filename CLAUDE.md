@@ -289,3 +289,36 @@ nothing running.
   locally-installed launchd services. No further token-sharing conflict
   is expected going forward; if it recurs, something reinstalled these
   outside this change.
+
+## Admin API done (2026-09-18): #22, #23, #24, #25 closed
+
+`app/api/` — FastAPI, protected end-to-end by `API_SERVER_KEY` bearer
+auth (`app/api/deps.py::verify_api_key`, attached via `dependencies=`
+at the app level). Full CRUD for users and channel identities, and
+grant/revoke for permissions (`app/api/routes.py`); `revoke_permission`
+added to `app/security/auth.py` alongside the existing `grant_permission`.
+
+- **`ChannelIdentityCreate` takes a raw identifier**, not a pre-computed
+  `external_id` — the route hashes it via the same
+  `app.security.hashing.channel_identifier_key()` the Auth Node uses,
+  so an identity created through the API is immediately queryable by
+  `authorize()`. Verified directly: granted a permission via HTTP,
+  then called `authorize()` in the same process (bypassing the API) and
+  confirmed it now allows that identity — and the reverse for revoke.
+- **Real bug found and fixed while verifying #25**: FastAPI's
+  automatic `/docs`/`/redoc`/`/openapi.json` routes are wired up
+  outside ordinary path operations and are **not** covered by
+  app-level `dependencies=` — they shipped completely unauthenticated
+  the first time this was tested, silently defeating #22's whole
+  point. Fixed by disabling the automatic ones (`docs_url=None` etc.)
+  and re-implementing both as ordinary routes in `app/api/app.py`,
+  which the dependency does cover. This is exactly the kind of gap the
+  "never close unless verified" rule exists to catch — the first pass
+  only tested `/users`, not FastAPI's own bolted-on routes.
+- Wired into `app/main.py` (a `uvicorn.Server` task alongside the
+  Telegram adapter), gated on `API_SERVER_KEY` being set.
+  `docker-compose.yml` now publishes `API_SERVER_PORT`. Verified for
+  real: built the actual image, ran the actual container, hit it with
+  `curl` from the host — 401 without the key, 200 with the real
+  `API_SERVER_KEY` from `.env`, returning the real bootstrap admin
+  (id 7231548225) created by #14 in the same running instance.
