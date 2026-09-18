@@ -13,16 +13,18 @@ Project conventions and the running decision log: [`CLAUDE.md`](CLAUDE.md).
 
 ## Status
 
-This repository is an early scaffold, not a runnable application yet.
-See the checklist in `docs/ARCHITECTURE.md` ("Status") for what exists
-and what's still missing (database models, admin API, channel
-adapters, the LangGraph workflow itself, and the Dockerfile).
+The P0 milestone is done: encrypted database, Auth Node, LangGraph
+orchestrator, and Docker packaging all exist and are verified — see
+`CLAUDE.md`'s "P0 milestone" entry for exactly what was tested. There
+are no channel adapters yet (Telegram/Email/Matrix — epic #6) and no
+Admin API yet (epic #5), so nothing routes a real message end-to-end
+on its own; `app/main.py` currently just boots the app and the
+database. Full picture: `gh issue list --repo ka8t/ChannelAgent`.
 
 ## Prerequisites
 
 - Python 3.11+
-- Docker (for the eventual container build — not required yet, see
-  Status above)
+- Docker
 - On macOS: a local `llama-server` process serving an LLM on port
   8080. ChannelAgent does not run its own inference server; it calls
   out to this one (native on Mac for development, an
@@ -66,33 +68,61 @@ must never be stored in the database either — see
 
 ## Start
 
+Start `llama-server` natively on the Mac first (see Prerequisites and
+Troubleshooting below), then:
+
 ```bash
-./start.sh
+docker compose up --build
 ```
 
-There is no application entry point to run yet (`app/main.py` and the
-Dockerfile don't exist — see Status above); `start.sh` currently stops
-after preparing and validating the local environment.
+`app/main.py` boots configuration and the database and stays running;
+there are no channel adapters wired in yet (see Status), so it doesn't
+do anything beyond that on its own.
+
+`start.sh` still exists for local (non-Docker) development: it copies
+`.env.example` to `.env` if missing, creates a Python virtualenv,
+installs `requirements.txt`, and (on macOS) checks that `llama-server`
+is reachable on `localhost:8080`.
 
 ## Verify
 
-Once the local venv is set up, confirm the encryption layer loads
-correctly:
+Confirm the encryption layer loads correctly:
 
 ```bash
 source .venv/bin/activate
 python3 -c "from app.security.encryption import encrypt_value, decrypt_value; t = encrypt_value('test'); assert decrypt_value(t) == 'test'; print('encryption OK')"
 ```
 
+Confirm the container reaches a real `llama-server` running on the Mac
+host (verified 2026-09-18 — see issue #20 for the full record):
+
+```bash
+# with llama-server already running on localhost:8080
+docker compose run --rm channelagent python3 -c "
+import asyncio
+from app.db.models import Channel
+from app.graph import run_turn
+print(asyncio.run(run_turn(Channel.TELEGRAM, 'debug', 'Reply with exactly the word: pong')))
+"
+```
+
+This should print `pong` (or close to it, depending on the model) —
+proof the container reached `host.docker.internal:8080` and got a real
+completion back, not just that the TCP port is open.
+
 ## Troubleshooting
 
 - **`ENCRYPTION_KEY is missing or empty`** (from `start.sh` or
   `app/config.py`): generate one with the command under Configure
   above and set it in `.env`.
-- **`llama-server is not reachable`** (macOS, from `start.sh`): start
-  it natively on the Mac host first — this project does not manage
-  that process. See the legacy reference script at
-  `../Hermes/macos-arm64/scripts/run-llama-server.sh` if useful.
+- **`llama-server is not reachable`** (macOS, from `start.sh`, or a
+  connection error from the Verify command above): start it natively
+  on the Mac host first — this project does not manage that process.
+  The legacy repo's `../Hermes/macos-arm64/scripts/run-llama-server.sh`
+  is a working reference invocation (binary path, model, and flags);
+  it expects Hermes's own `.env`, so either run it from there or reuse
+  just its `llama-server` command line with this project's `.env`
+  values (`LLAMA_CTX_SIZE`, `MODEL_FILE`).
 - **Fernet `ValueError: Fernet key must be 32 url-safe base64-encoded
   bytes`**: `ENCRYPTION_KEY` is in the wrong format — it must not be a
   hex string (e.g. a SHA-256 digest); it must be the base64 output of
