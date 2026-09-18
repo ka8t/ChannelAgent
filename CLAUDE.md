@@ -433,13 +433,14 @@ l'implémente pas" — only planned as GitHub issues:
 - **#36** AccessRequest model + approve/deny flow (today, #12 just
   silently denies an unrecognized identity — no way to ask for access)
 - **#37** Agent model — a `User` can own multiple named agents, not
-  just one shared assistant. **Open design question flagged in the
-  issue, not decided**: is an Agent channel-agnostic
-  (`thread_id = {channel}_{user_id}_{agent_id}`) or scoped to one
-  `ChannelIdentity`? Proposed channel-agnostic as the default reading
-  of "create one or more autonomous agents," but this changes the
-  already-shipped #16 thread_id scheme, so needs confirmation before
-  any code lands.
+  just one shared assistant. **Design question resolved by the user
+  (2026-09-18)**: an Agent belongs to a `User` and is channel-agnostic
+  (`thread_id` becomes `{channel}_{user_id}_{agent_id}`, extending the
+  already-shipped #16 scheme) — not scoped to one `ChannelIdentity`.
+  **Also specified: an Agent is admin-editable**, not only
+  self-service by its owning user — #41's CLI and the Admin API must
+  both expose editing (at minimum rename, activate/deactivate) any
+  user's Agent.
 - **#38** ActionLog — every inbound/outbound action, encrypted text
   (same sensitivity class as `raw_address`, #9), attributed to
   user+agent+channel: the actual "tracer toute action" requirement.
