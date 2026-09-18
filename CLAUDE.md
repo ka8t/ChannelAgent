@@ -270,8 +270,22 @@ nothing running.
   ```
   Confirmed both fully stopped (`launchctl list`, `lsof -i :8645`, `ps
   aux` all empty afterward) and won't restart at next login (`-w`
-  persists the disable). The `.plist` files themselves were left in
-  place, not deleted — re-enabling Hermes later, if ever needed, is a
-  `launchctl load -w` away. No further token-sharing conflict is
-  expected going forward; if it recurs, something restarted Hermes
+  persists the disable).
+
+  **Update, same session**: the user then asked to delete the `.plist`
+  files outright, not just leave them unloaded. Removed:
+  ```
+  rm ~/Library/LaunchAgents/ai.hermes.gateway.plist
+  rm ~/Library/LaunchAgents/com.hermes.silent-failure-watchdog.plist
+  ```
+  Re-confirmed fully clean afterward (no files, no `launchctl` entries,
+  no processes, port 8645 free). `ai.hermes.gateway.plist` had no
+  source template in the Hermes repo (unlike the watchdog one,
+  `macos-arm64/scripts/com.hermes.silent-failure-watchdog.plist.example`)
+  — if Hermes's gateway is ever needed again, it would need
+  regenerating via Hermes's own setup tooling (`hermes gateway setup`),
+  not a file restore. The Hermes project directory itself
+  (`/Users/mac/Documents/Code/Hermes`) was not touched — only the
+  locally-installed launchd services. No further token-sharing conflict
+  is expected going forward; if it recurs, something reinstalled these
   outside this change.
