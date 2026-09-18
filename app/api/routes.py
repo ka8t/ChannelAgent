@@ -129,7 +129,9 @@ async def list_channel_identities(
     return list((await session.execute(stmt)).scalars().all())
 
 
-@router.delete("/users/{user_id}/channels/{channel_identity_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/users/{user_id}/channels/{channel_identity_id}", status_code=status.HTTP_204_NO_CONTENT
+)
 async def delete_channel_identity(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> None:
@@ -158,7 +160,10 @@ async def grant(
     return PermissionOut.model_validate(permission)
 
 
-@router.get("/users/{user_id}/channels/{channel_identity_id}/permissions", response_model=list[PermissionOut])
+@router.get(
+    "/users/{user_id}/channels/{channel_identity_id}/permissions",
+    response_model=list[PermissionOut],
+)
 async def list_permissions(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> list[PermissionOut]:

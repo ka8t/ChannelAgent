@@ -25,7 +25,7 @@ rationale):
 """
 
 import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -38,7 +38,7 @@ class Base(DeclarativeBase):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _db_enum(enum_cls: type[enum.Enum]) -> Enum:
@@ -50,13 +50,13 @@ def _db_enum(enum_cls: type[enum.Enum]) -> Enum:
     return Enum(enum_cls, native_enum=False, values_callable=lambda cls: [e.value for e in cls])
 
 
-class Channel(str, enum.Enum):
+class Channel(enum.StrEnum):
     TELEGRAM = "telegram"
     EMAIL = "email"
     MATRIX = "matrix"
 
 
-class PermissionKind(str, enum.Enum):
+class PermissionKind(enum.StrEnum):
     CHAT = "chat"
     ADMIN = "admin"
 

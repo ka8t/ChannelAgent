@@ -41,11 +41,17 @@ async def bootstrap_admin_from_env(session: AsyncSession) -> None:
         user = User(display_name=f"Bootstrap admin ({telegram_id})")
         session.add(user)
         await session.flush()
-        identity = ChannelIdentity(user_id=user.id, channel=Channel.TELEGRAM, external_id=telegram_id)
+        identity = ChannelIdentity(
+            user_id=user.id, channel=Channel.TELEGRAM, external_id=telegram_id
+        )
         session.add(identity)
         await session.flush()
         await grant_permission(session, identity, PermissionKind.ADMIN)
-        logger.info("Bootstrapped admin user for Telegram id %s from TELEGRAM_ALLOWED_USERS", telegram_id)
+        logger.info(
+            "Bootstrapped admin user for Telegram id %s from TELEGRAM_ALLOWED_USERS", telegram_id
+        )
 
     await session.commit()
-    logger.info("TELEGRAM_ALLOWED_USERS will not be consulted again — the database is now authoritative.")
+    logger.info(
+        "TELEGRAM_ALLOWED_USERS will not be consulted again — the database is now authoritative."
+    )

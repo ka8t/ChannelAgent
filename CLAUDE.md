@@ -393,3 +393,26 @@ Linux Docker host, neither available here (the Mac's binary is
 macOS-only). Close this only after that real test, mirroring how #20
 was handled (documented partial verification first, full closure only
 once a real end-to-end run was possible).
+
+## #32 (CI) closed; epic #7 fully done (2026-09-18)
+
+`.github/workflows/ci.yml`: `lint-and-test` (ruff + pytest) and a
+separate `docker-build` job — kept separate on purpose, since the
+Dockerfile's missing-`alembic.ini` bug earlier this session was only
+ever catchable by an actual image build, not a unit test.
+
+Wiring this up surfaced and fixed real lint issues in existing code,
+not just tool config: `pyproject.toml` gained `[tool.ruff.lint]` with
+`ignore = ["B008"]` (flake8-bugbear's "no calls in argument defaults"
+otherwise flags every FastAPI `Depends(...)`, which is how FastAPI's
+DI is meant to be used — not a bug), a handful of wrapped long lines,
+and `Channel`/`PermissionKind` switched from `(str, enum.Enum)` to
+`enum.StrEnum` (ruff flagged this specific one as an *unsafe* autofix —
+`str(member)` formatting differs between the two — so re-ran the full
+test suite plus all 6 manual verification scripts plus a real `docker
+build` afterward before keeping it; everything still passed).
+
+Epics **#1**, **#2**, **#3**, **#5**, **#7** are now all fully closed.
+Still open: **#4** (docker — blocked on #21's real VPS test), **#6**
+(channels — blocked on #28/#29, pending real Email/Matrix
+credentials).
