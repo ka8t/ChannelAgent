@@ -13,13 +13,17 @@ Project conventions and the running decision log: [`CLAUDE.md`](CLAUDE.md).
 
 ## Status
 
-The P0 milestone is done: encrypted database, Auth Node, LangGraph
-orchestrator, and Docker packaging all exist and are verified — see
-`CLAUDE.md`'s "P0 milestone" entry for exactly what was tested. There
-are no channel adapters yet (Telegram/Email/Matrix — epic #6) and no
-Admin API yet (epic #5), so nothing routes a real message end-to-end
-on its own; `app/main.py` currently just boots the app and the
-database. Full picture: `gh issue list --repo ka8t/ChannelAgent`.
+Session paused 2026-09-18 (resuming after 2026-09-20). All P0-critical
+work is done and verified (encrypted database, Auth Node, LangGraph
+orchestrator, Docker packaging including a real production VPS
+topology test). The Admin API (epic #5) and the agent/request/logging
+mechanics with an interactive console (`./start.sh --admin`, epic #35)
+are both done. Telegram (#27) and Email (#28) adapters are live and
+verified with real end-to-end round trips; Matrix (#29) is not yet
+implemented, blocked on real credentials. 24 automated tests, 0
+failing. Full picture, always current: `gh issue list --repo
+ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
+the exact resume checklist.
 
 ## Prerequisites
 
