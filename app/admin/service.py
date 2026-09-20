@@ -3,7 +3,7 @@ interactive CLI (#41) and the Admin API both call these functions —
 neither re-implements the DB queries itself.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, func, select, update
@@ -25,6 +25,7 @@ from app.db.models import (
     _utcnow,
 )
 from app.db.session import sqlite_file_path
+from app.db.types import UndecryptableText
 from app.security.auth import grant_permission, revoke_permission
 from app.security.hashing import channel_identifier_key
 
@@ -568,7 +569,7 @@ async def search_action_logs(
             (await session.execute(batch_stmt.limit(_LOG_SEARCH_BATCH))).scalars().all()
         )
         for entry in batch:
-            if needle not in entry.text.lower():
+            if isinstance(entry.text, UndecryptableText) or needle not in entry.text.lower():
                 continue
             if skipped < offset:
                 skipped += 1
@@ -590,9 +591,50 @@ class StorageOverview:
     row_counts: dict[str, int]  # table name -> number of rows
     oldest_log_at: datetime | None  # UTC, None when there is no action log yet
     newest_log_at: datetime | None
+    # Stored values that the current key cannot decrypt, per table (#55).
+    undecryptable_by_table: dict[str, int] = field(default_factory=dict)
+
+    @property
+    def undecryptable_rows(self) -> int:
+        return sum(self.undecryptable_by_table.values())
 
 
 _COUNTED_MODELS = (User, ChannelIdentity, Permission, AccessRequest, Agent, ActionLog)
+
+
+# (table, encrypted column): every column that holds an encrypted value.
+_ENCRYPTED_COLUMNS = (
+    ("action_logs", "text"),
+    ("access_requests", "first_message_text"),
+    ("channel_identities", "raw_address"),
+)
+
+
+async def count_undecryptable(session: AsyncSession) -> dict[str, int]:
+    """How many stored values the current ENCRYPTION_KEY cannot decrypt, per
+    table, counting only tables that have some. Reads the raw ciphertext with
+    plain SQL and tries to decrypt each value itself, so it does not depend on
+    the marker the ORM shows and a real message that says `<undecryptable>`
+    is never counted. O(n) in the number of encrypted values.
+    """
+    from sqlalchemy import text
+
+    from app.security.encryption import decrypt_value
+
+    counts: dict[str, int] = {}
+    for table, column in _ENCRYPTED_COLUMNS:
+        rows = await session.execute(
+            text(f'select "{column}" from "{table}" where "{column}" is not null')
+        )
+        bad = 0
+        for (value,) in rows:
+            try:
+                decrypt_value(value)
+            except ValueError:
+                bad += 1
+        if bad:
+            counts[table] = bad
+    return counts
 
 
 async def storage_overview(session: AsyncSession) -> StorageOverview:
@@ -619,6 +661,7 @@ async def storage_overview(session: AsyncSession) -> StorageOverview:
         row_counts=counts,
         oldest_log_at=_as_utc(oldest) if oldest is not None else None,
         newest_log_at=_as_utc(newest) if newest is not None else None,
+        undecryptable_by_table=await count_undecryptable(session),
     )
 
 

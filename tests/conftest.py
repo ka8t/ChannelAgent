@@ -48,8 +48,10 @@ async def isolated_checkpoints(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.db"))
     from app.config import get_settings
+    from app.db import types
 
     get_settings.cache_clear()
+    types.reset_warning_state()
     yield
     from app import graph
 

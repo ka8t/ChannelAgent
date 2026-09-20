@@ -89,6 +89,8 @@ class StorageOut(BaseModel):
     row_counts: dict[str, int]
     oldest_log_at: datetime | None
     newest_log_at: datetime | None
+    undecryptable_rows: int
+    undecryptable_by_table: dict[str, int]
 
 
 class AgentCreate(BaseModel):

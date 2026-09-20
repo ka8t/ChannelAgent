@@ -11,7 +11,7 @@ State at pause, verified facts, not narrative:
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
   miscount): **34 closed, 33 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **480 passed, 0 failed** (24 at pause; the rest added on
+- `pytest`: **493 passed, 0 failed** (24 at pause; the rest added on
   2026-09-20 for the email rules, #39, #40, #45, #52 and the P1 work below).
   `ruff check .`: 0 issues. **The P1 work is in the working tree, NOT
   committed yet** (27 changed files). `ruff check .`: 0 issues.
@@ -78,6 +78,14 @@ the above — this section is only the *what's left*.
 - **Secrets**: never commit `.env` or key material. `ENCRYPTION_KEY`
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
+- **Work strictly by priority (user, 2026-09-20: "tu ne sautes pas les
+  priorités pour aller plus vite, jamais").** Every ticket of a priority is
+  finished before any ticket of a lower priority is started: all P0, then
+  all P1, then P2, then P3, numeric order inside a tier unless the user gives
+  another order. No reordering for speed, convenience or "safety". On
+  2026-09-20 P2 tickets (#53, #54, #66) were done and #55 was started while
+  P1 #67 was open: that was wrong. If the only work left in a tier needs the
+  user, say so in the issue and wait, do not fall through to the next tier.
 - **Trace every question in an issue, no pending confirmations in chat
   (user, 2026-09-20: "je ne veux pas de points en attente de
   confirmation. Je veux que tous les questionnements soient aussi tracés
@@ -1009,8 +1017,8 @@ email password and the API key are not, and `.env` was never tracked.
   Update a stub bot. Test-count claims in comments must come from
   `pytest --collect-only`, not from memory (4 wrong figures were corrected in
   #46 and #51).
-- The real database is at revision `5527b11034f7`; `85b89421b227` is applied
-  at the next start, and **#66 is implemented: `init_db()` now backs up an
+- The real database is at head `85b89421b227` (applied 2026-09-20 with an
+  automatic backup first) and **#66 is implemented: `init_db()` now backs up an
   existing database that is behind head into `backups/` (verified copy, 5
   kept, migration refused if the copy fails)**. Restore: see ARCHITECTURE.
 
@@ -1022,9 +1030,11 @@ email password and the API key are not, and `.env` was never tracked.
   transaction per database, verification, idempotent. Covers the three
   encrypted columns and the checkpoint payloads. Procedure and warnings in
   ARCHITECTURE ("Encryption key: backup, loss and rotation"). Rehearsed on a
-  copy of the real database (11 values). **The rotation of the real files is
-  still to be done by the owner**; until then the exposed key still protects
-  the real data. Delete the `*-prerekey-*.db` copies afterwards.
+  copy of the real database (11 values). **The real key was rotated on
+  2026-09-20**: 11 values re-encrypted, the old key reads 0 of 11, the new key
+  is in `.env` only (0 tracked files, 0 commits). Two local safety-net files
+  remain until the owner deletes them: `.env.pre-rekey` and
+  `data/backups/channelagent-prerekey-*.db` (see #67).
 - gitleaks: `.gitleaks.toml` (two exact values allowed), `.gitleaks-baseline.json`
   (the c8a9eaa finding), CI job `secret-scan`. Locally: `docker run --rm -v
   "$PWD":/repo zricethezav/gitleaks:latest detect --source /repo --redact
@@ -1036,3 +1046,13 @@ email password and the API key are not, and `.env` was never tracked.
   started and set aside: its tests are drafted outside the repo. Only P1 work
   remains open in the sense of "owner steps": the real key rotation, the live
   checks of #61, and the epics #6 (needs #29) and #35.
+
+
+## P2 in order, after all P1 (2026-09-20)
+
+P1 is finished on the code side (the real key was rotated, see #67); what is
+left in P1 is the owner's decision to close and the epics. P2 resumed in
+numeric order: **#55** implemented (unreadable values shown as
+`<undecryptable>`, counted in `/storage`, one warning per minute); on the
+real database read with the old key it counted exactly 11. Next in order:
+#58, #59, #63; #62 is an owner decision and #29 was set aside.

@@ -338,6 +338,21 @@ nothing. **The prerekey copies are still encrypted with the old key**: delete
 them once the rotation is verified, or the old key keeps protecting nothing
 that matters but still opens them.
 
+**A value the current key cannot decrypt** (a corrupted row, a backup restored
+with another key, a key that was changed without `rekey`) does not make
+anything fail (#55). The column yields the marker `<undecryptable>`, a `str`
+subclass (`UndecryptableText`) so code can tell it from a real message that
+says the same words: a keyword search never matches it, and nothing writes it
+back, the stored value is left as it is. The API and the console show the
+marker, the storage overview (`GET /storage`, console menu 5) reports how many
+stored values are unreadable, in total and per table
+(`undecryptable_rows`, `undecryptable_by_table`), counted from the raw stored
+values and not from the marker. The warning in the log appears once a minute
+with the number of similar ones left out, because a wrong key makes every
+value unreadable. Conversation checkpoints behave differently: a thread that
+cannot be decrypted fails its turns
+([#63](https://github.com/ka8t/ChannelAgent/issues/63)).
+
 A key that was committed or leaked must be rotated even though the new key
 protects new data only from that moment: anyone who holds the old key and an
 old copy of the data (a backup, an old volume) can still read that copy.

@@ -86,11 +86,16 @@ async def populated(empty_db):
         session.add_all(agents)
         await session.flush()
         for i, moment in enumerate(LOG_TIMES):
-            session.add(ActionLog(
-                user_id=alice.id, agent_id=agents[0].id, channel=Channel.TELEGRAM,
-                direction=Direction.INBOUND if i % 2 == 0 else Direction.OUTBOUND,
-                text=f"message {i}", created_at=moment,
-            ))
+            session.add(
+                ActionLog(
+                    user_id=alice.id,
+                    agent_id=agents[0].id,
+                    channel=Channel.TELEGRAM,
+                    direction=Direction.INBOUND if i % 2 == 0 else Direction.OUTBOUND,
+                    text=f"message {i}",
+                    created_at=moment,
+                )
+            )
         await session.commit()
 
 
@@ -108,8 +113,12 @@ async def _overview():
 async def test_row_counts_match_a_direct_sql_query(populated):
     overview = await _overview()
     expected = {
-        "users": 3, "channel_identities": 4, "permissions": 5,
-        "access_requests": 2, "agents": 3, "action_logs": 7,
+        "users": 3,
+        "channel_identities": 4,
+        "permissions": 5,
+        "access_requests": 2,
+        "agents": 3,
+        "action_logs": 7,
     }
     assert overview.row_counts == expected, "known dataset"
     assert overview.row_counts == _direct_counts(), "independent direct query"
@@ -155,7 +164,9 @@ async def test_database_that_is_not_a_sqlite_file_has_no_size(populated, monkeyp
     from app.admin import service
 
     monkeypatch.setattr(
-        service, "get_settings", lambda: SimpleNamespace(database_url="postgresql+asyncpg://u:p@h/db")
+        service,
+        "get_settings",
+        lambda: SimpleNamespace(database_url="postgresql+asyncpg://u:p@h/db"),
     )
     overview = await _overview()
     assert overview.db_size_bytes is None
@@ -208,7 +219,15 @@ async def test_api_numbers_match_sql_and_filesystem(api):
     assert body["db_size_bytes"] == os.path.getsize(_db_file())
     assert body["oldest_log_at"].startswith("2026-09-10T08:00:00")
     assert body["newest_log_at"].startswith("2026-09-20T10:00:00")
-    assert set(body) == {"db_size_bytes", "row_counts", "oldest_log_at", "newest_log_at"}
+    assert set(body) == {
+        "db_size_bytes",
+        "row_counts",
+        "oldest_log_at",
+        "newest_log_at",
+        "undecryptable_rows",
+        "undecryptable_by_table",
+    }
+    assert body["undecryptable_rows"] == 0 and body["undecryptable_by_table"] == {}
 
 
 async def test_api_does_not_reveal_the_file_path(api):
@@ -227,9 +246,9 @@ async def test_console_prints_the_same_numbers(populated, capsys):
     size = os.path.getsize(_db_file())
     assert "Database size: " in out and f"{size} bytes" in out
     for table, count in _direct_counts().items():
-        assert any(
-            line.split() == [table, str(count)] for line in out.splitlines()
-        ), f"{table} = {count} missing from the console output"
+        assert any(line.split() == [table, str(count)] for line in out.splitlines()), (
+            f"{table} = {count} missing from the console output"
+        )
     assert "Oldest log: 2026-09-10 08:00:00 UTC" in out
     assert "Newest log: 2026-09-20 10:00:00 UTC" in out
 
@@ -245,9 +264,14 @@ async def test_console_on_an_empty_database(empty_db, capsys):
 
 @pytest.mark.parametrize(
     ("size", "expected"),
-    [(0, "0 bytes"), (1023, "1023 bytes"), (1024, "1.0 KiB (1024 bytes)"),
-     (1536, "1.5 KiB (1536 bytes)"), (5 * 1024**2, "5.0 MiB (5242880 bytes)"),
-     (3 * 1024**3, "3.0 GiB (3221225472 bytes)")],
+    [
+        (0, "0 bytes"),
+        (1023, "1023 bytes"),
+        (1024, "1.0 KiB (1024 bytes)"),
+        (1536, "1.5 KiB (1536 bytes)"),
+        (5 * 1024**2, "5.0 MiB (5242880 bytes)"),
+        (3 * 1024**3, "3.0 GiB (3221225472 bytes)"),
+    ],
 )
 def test_human_size(size, expected):
     from app.admin import cli

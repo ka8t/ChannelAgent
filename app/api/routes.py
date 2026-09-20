@@ -295,4 +295,6 @@ async def storage(session: AsyncSession = Depends(get_db_session)) -> StorageOut
         row_counts=overview.row_counts,
         oldest_log_at=overview.oldest_log_at,
         newest_log_at=overview.newest_log_at,
+        undecryptable_rows=overview.undecryptable_rows,
+        undecryptable_by_table=overview.undecryptable_by_table,
     )

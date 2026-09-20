@@ -324,6 +324,9 @@ async def _menu_storage() -> None:
         print(f"  {table:<20} {count}")
     print(f"Oldest log: {_fmt_time(overview.oldest_log_at)}")
     print(f"Newest log: {_fmt_time(overview.newest_log_at)}")
+    print(f"Undecryptable values: {overview.undecryptable_rows}")
+    for table, count in overview.undecryptable_by_table.items():
+        print(f"  {table:<20} {count}")
 
 
 _MENU = {
