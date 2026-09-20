@@ -1,5 +1,10 @@
 """Shared pytest fixtures.
 
+The ENCRYPTION_KEY below is a throwaway key used by the tests only. It has never
+protected real data: the real key lives in .env and must never appear in a
+tracked file (tests/test_no_committed_secrets.py fails if a Fernet-shaped key
+appears anywhere else).
+
 ENCRYPTION_KEY must be set before app.config is imported anywhere
 (get_settings() is required, no default) — set at collection time,
 before any test module imports app.* code.
@@ -7,7 +12,7 @@ before any test module imports app.* code.
 
 import os
 
-os.environ.setdefault("ENCRYPTION_KEY", "x363KqoSjUm_XlMo1PsoINijTKX6-1OKBMbQN84ZJGY=")
+os.environ.setdefault("ENCRYPTION_KEY", "PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=")
 
 import pytest
 

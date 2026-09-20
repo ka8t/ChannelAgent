@@ -9,9 +9,9 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **34 closed, 32 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
+  miscount): **34 closed, 33 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **378 passed, 0 failed** (24 at pause; the rest added on
+- `pytest`: **415 passed, 0 failed** (24 at pause; the rest added on
   2026-09-20 for the email rules, #39, #40, #45, #52 and the P1 work below).
   `ruff check .`: 0 issues. **The P1 work is in the working tree, NOT
   committed yet** (27 changed files). `ruff check .`: 0 issues.
@@ -973,3 +973,23 @@ bounded to 3 then `<folder>.Failed`; `resolved_by` is `api` or `console`.
   `INBOX.Agent.Failed` at the 3rd; the folder and the mail were deleted
   afterwards. The bot must never be authorized for its own address when a
   reply would loop (the reply keeps the tag): that test sent no reply.
+
+
+## Security finding: the real ENCRYPTION_KEY was committed (2026-09-20)
+
+Found while writing the `start.sh` tests: the value of `.env`'s
+`ENCRYPTION_KEY` (sha256 prefix `041deaf91ec3`) was the default key in
+`tests/conftest.py` since commit `c8a9eaa` (#30/#31), on GitHub. By exact
+value only that key is in the history (1 commit); the Telegram token, the
+email password and the API key are not, and `.env` was never tracked.
+
+- **Done, uncommitted:** the test default is now a throwaway key (prefix
+  `16a2dae388da`), and `tests/test_no_committed_secrets.py` fails when a
+  Fernet-shaped value appears in any tracked file other than
+  `tests/conftest.py`.
+- **Not done:** the real key is still the exposed one. Rotation needs a
+  rekey tool and touches the real data, tracked with its open questions in
+  the issue created for it. **Tests must never use the real key.**
+- Also fixed in `start.sh` while there: `--show-config` did not mask
+  `MATRIX_BOT_ACCESS_TOKEN` (the mask list still held the pre-rename name),
+  and `--set` accepted invalid or misspelled names.

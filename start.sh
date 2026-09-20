@@ -46,6 +46,7 @@ SENSITIVE = {
     "TELEGRAM_BOT_TOKEN",
     "EMAIL_PASSWORD",
     "MATRIX_ACCESS_TOKEN",
+    "MATRIX_BOT_ACCESS_TOKEN",
 }
 
 
@@ -86,14 +87,33 @@ set_config() {
   fi
   local key="${kv%%=*}"
   local value="${kv#*=}"
+  if ! [[ "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+    echo "'${key}' is not a valid variable name (UPPER_CASE letters, digits and underscores)." >&2
+    exit 1
+  fi
   if [ ! -f .env ]; then
     cp .env.example .env
   fi
   python3 - "$key" "$value" <<'PYEOF'
+import difflib
 import sys
 
 key, value = sys.argv[1], sys.argv[2]
 path = ".env"
+
+# Only variables the application knows (the ones in .env.example): a typo
+# such as LLAMA_PROT would otherwise be written silently and ignored.
+known = []
+with open(".env.example") as f:
+    for line in f:
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            known.append(line.partition("=")[0])
+if key not in known:
+    close = difflib.get_close_matches(key, known, n=3)
+    hint = f" Did you mean: {', '.join(close)}?" if close else ""
+    print(f"unknown variable '{key}'.{hint} Known variables: {', '.join(known)}", file=sys.stderr)
+    sys.exit(1)
 
 with open(path) as f:
     lines = f.readlines()
