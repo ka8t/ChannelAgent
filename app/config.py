@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     email_smtp_port: int = Field(default=587, alias="EMAIL_SMTP_PORT")
     email_username: str | None = Field(default=None, alias="EMAIL_USERNAME")
     email_password: str | None = Field(default=None, alias="EMAIL_PASSWORD")
+    # The mailbox is shared with ordinary mail (website contact form,
+    # customer questions), so the adapter only touches messages whose
+    # subject contains this tag. Empty means "process nothing", never
+    # "process everything". See docs/ARCHITECTURE.md ("Email on a shared
+    # mailbox").
+    email_trigger_tag: str = Field(default="[agent]", alias="EMAIL_TRIGGER_TAG")
+    # Where a handled agent message is filed so it leaves the INBOX humans
+    # read. Created on first use. The default follows the OVH/Dovecot
+    # layout ("." separator under INBOX); change it for another provider.
+    # Empty means "leave handled messages in the INBOX".
+    email_agent_folder: str = Field(default="INBOX.Agent", alias="EMAIL_AGENT_FOLDER")
 
     # Matrix adapter (#29, not yet implemented)
     matrix_homeserver_url: str | None = Field(default=None, alias="MATRIX_HOMESERVER_URL")

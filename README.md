@@ -20,7 +20,7 @@ topology test). The Admin API (epic #5) and the agent/request/logging
 mechanics with an interactive console (`./start.sh --admin`, epic #35)
 are both done. Telegram (#27) and Email (#28) adapters are live and
 verified with real end-to-end round trips; Matrix (#29) is not yet
-implemented, blocked on real credentials. 24 automated tests, 0
+implemented, blocked on real credentials. 48 automated tests, 0
 failing. Full picture, always current: `gh issue list --repo
 ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
 the exact resume checklist.
@@ -62,6 +62,20 @@ missing) and fill in:
   adapter.
 - `EMAIL_*` / `MATRIX_*` — for the Email and Matrix/Element adapters,
   optional.
+- `EMAIL_TRIGGER_TAG` — default `[agent]`. The email mailbox is shared
+  with ordinary mail (website contact form, customer questions), so the
+  bot only reads and answers messages whose **subject contains this
+  tag**, for example `[agent] what is on my list today?`. Every other
+  message is left untouched and unread. Replies keep the tag, so a
+  conversation continues without retyping it. Rules and the planned move
+  to a dedicated bot mailbox
+  ([#42](https://github.com/ka8t/ChannelAgent/issues/42)):
+  `docs/ARCHITECTURE.md`, section "Email on a shared mailbox".
+- `EMAIL_AGENT_FOLDER` — default `INBOX.Agent`. A handled agent message
+  is moved here so it leaves the `INBOX` that humans read (the folder is
+  created on first use). The `.` separator is the OVH/Dovecot layout, use
+  your provider's otherwise. Empty leaves messages in the `INBOX`.
+  Nothing is ever deleted or purged automatically.
 - `LLAMA_SERVER_URL` — where the LLM gateway is reachable. Defaults to
   `http://host.docker.internal:8080` (the container reaching the Mac
   host's native `llama-server`; see `docs/ARCHITECTURE.md`).

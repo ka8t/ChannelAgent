@@ -95,6 +95,73 @@ Normalized event schema:
 }
 ```
 
+### Email on a shared mailbox
+
+The mailbox used by the Email adapter, `contact@codefixture.com`, is
+shared. The website uses it to receive contact and information
+requests, and the bot uses it to talk to its users. The adapter has to
+tell an ordinary customer mail from a message meant for the bot, and it
+must never disturb the ordinary ones.
+
+**Rule (subject tag).** The adapter only handles messages whose subject
+contains `EMAIL_TRIGGER_TAG` (default `[agent]`, case-insensitive, ASCII
+only). A reply keeps the tag because the adapter answers with
+`Re: <original subject>`, so a conversation continues without retyping
+it.
+
+| Incoming message | What the adapter does |
+|---|---|
+| No tag in the subject | Nothing. Not fetched, not flagged, not answered. It stays unread for a human. |
+| Tag, sender authorized | Read, marked Seen, filed into `EMAIL_AGENT_FOLDER`, routed to the agent, reply sent. |
+| Tag, sender unknown | Read, marked Seen, filed into `EMAIL_AGENT_FOLDER`, an `AccessRequest` is created for the admin. No reply is sent. |
+
+How the guarantees are enforced (`app/channels/email.py`):
+
+- The server-side `SEARCH UNSEEN SUBJECT "<tag>"` narrows the set, and
+  the subject is checked again in the adapter because IMAP servers
+  differ in how they match `SUBJECT`.
+- Messages are fetched with `BODY.PEEK[]`, which sets no flag. Only a
+  tagged message is then marked `\Seen`. A plain `RFC822` fetch marks the
+  message as read on most servers, which is what hid customer mail from
+  humans before this rule existed.
+- An empty tag, or one with non-ASCII characters, quotes or backslashes,
+  is refused: the adapter does not start. An empty tag never means
+  "process everything".
+- A handled message leaves the `INBOX` that humans read: it is moved to
+  `EMAIL_AGENT_FOLDER` (default `INBOX.Agent`, the OVH/Dovecot layout with
+  `.` as separator; created and subscribed on first use; empty value =
+  leave it in the `INBOX`). Everything is addressed by IMAP UID, not by
+  message number, because a move renumbers the messages after it. The
+  move uses `UID MOVE` when the server and `imaplib` both support it,
+  otherwise `UID COPY` + `\Deleted` + `UID EXPUNGE` (needs `UIDPLUS`),
+  otherwise nothing is moved. A plain `EXPUNGE` is never sent, because it
+  would also remove messages a human client flagged Deleted but has not
+  expunged. A failed move is logged and never blocks the message from
+  being handled. **Nothing is deleted or purged automatically**: this was
+  an explicit decision (2026-09-20), messages are moved, never removed.
+- Unknown senders get no reply on email (`SILENT_DENIAL_CHANNELS` in
+  `app/channels/dispatch.py`). An email `From` address can be forged, so
+  answering it would send mail to a third party.
+
+**What email can do today.** A conversation with the user's default
+agent. Creating or editing agents is done from the admin console
+(`./start.sh --admin`) or the Admin API, not by sending a command by
+mail: no message parsing for commands exists yet.
+
+**The tag is a routing convention, not a security boundary.** Anyone can
+type it. Access control is still the Auth Node: a tagged message from an
+unknown sender only creates a pending request.
+
+Tracking: the tag rule is [#43](https://github.com/ka8t/ChannelAgent/issues/43),
+the folder is [#44](https://github.com/ka8t/ChannelAgent/issues/44).
+
+**Future evolution
+([#42](https://github.com/ka8t/ChannelAgent/issues/42)).** Give the bot
+its own dedicated address, used only by the Email adapter. The tag is
+then no longer needed to protect ordinary mail, and can be removed or
+kept as an optional extra filter. This only needs the `EMAIL_*`
+variables to point at the new mailbox, plus the decision about the tag.
+
 ### Event Normalizer and Auth Node
 
 The Event Normalizer converts each channel's raw payload into the

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.admin.service import get_or_create_default_agent, record_action, request_access
 from app.channels.schema import NormalizedEvent
-from app.db.models import Direction
+from app.db.models import Channel, Direction
 from app.graph import run_turn
 from app.security.auth import authorize
 from app.security.hashing import channel_identifier_key
@@ -24,6 +24,12 @@ logger = logging.getLogger("channelagent")
 DENIED_MESSAGE = (
     "You're not authorized to use this bot yet. An admin has been notified of your request."
 )
+
+# Channels where an unauthorized sender gets an AccessRequest but no
+# reply. An email's From address can be forged, so answering it would
+# send mail to a third party, and the mailbox is shared with ordinary
+# customer mail.
+SILENT_DENIAL_CHANNELS = frozenset({Channel.EMAIL})
 
 
 async def dispatch_event(session: AsyncSession, event: NormalizedEvent) -> None:
@@ -40,7 +46,8 @@ async def dispatch_event(session: AsyncSession, event: NormalizedEvent) -> None:
                 direction=Direction.INBOUND, text=event.text,
             )
         await session.commit()
-        await event.reply(DENIED_MESSAGE)
+        if event.channel not in SILENT_DENIAL_CHANNELS:
+            await event.reply(DENIED_MESSAGE)
         return
 
     agent = await get_or_create_default_agent(session, decision.user.id)

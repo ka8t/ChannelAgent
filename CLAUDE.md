@@ -8,9 +8,11 @@ State at pause, verified facts, not narrative:
 - `git rev-parse HEAD` on `main` == `git rev-parse origin/main` for
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
-- GitHub issues: **30 closed, 5 open** (`gh issue list --repo
+- GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
+  miscount): **36 closed, 9 open** counting #42-#45 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **24 passed, 0 failed**. `ruff check .`: 0 issues.
+- `pytest`: **48 passed, 0 failed** (24 at pause, +24 for the shared
+  mailbox rules below). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -30,6 +32,13 @@ State at pause, verified facts, not narrative:
 6. Open question from the user, not yet decided: whether to make
    `ChannelAgent` public so the deprecation notice added to the public
    `Hermes` repo actually resolves for outside readers.
+7. **#42** Dedicated bot mailbox instead of the shared `contact@` one —
+   P3, planned evolution of the subject-tag rule below.
+8. **#43** Subject-tag rule (bug fix of #28) and **#44** filing handled
+   mail into `INBOX.Agent`: implemented in the working tree, **not
+   committed yet**, so both stay open until the commit lands (close with
+   the hash and re-run figures). **#45** `init_db()` silences the app
+   loggers (alembic `fileConfig`), not fixed.
 
 Read the rest of this file chronologically for the *why* behind any of
 the above — this section is only the *what's left*.
@@ -671,3 +680,81 @@ inbox afterward.
 Epic #6 still open — only #29 (Matrix) remains, still blocked on real
 credentials (the user gave only a placeholder example, see #29's
 existing comment).
+
+## Email on a shared mailbox: subject tag rule (2026-09-20)
+
+`contact@codefixture.com` is used by the website (contact and
+information requests) **and** by the bot. Found while auditing closed
+issues: the original #28 adapter fetched every UNSEEN message in INBOX
+with `RFC822` (which marks it read on most servers), then explicitly
+marked it Seen, and answered unknown senders with a refusal. On
+2026-09-19 (~09:37 and ~11:17 Paris time) two unknown senders were
+picked up that way (two pending `access_requests` in the real DB): their
+mail was very likely marked read and answered by the bot. The user was
+told to check `contact@` for read-but-unanswered mail from those hours.
+
+**Rule, decided with the user:** the adapter only touches messages whose
+subject contains `EMAIL_TRIGGER_TAG` (default `[agent]`). Untagged mail
+is never fetched, flagged or answered. Reads use `BODY.PEEK[]`; only
+tagged messages get `\Seen`. Unknown *tagged* senders get an
+`AccessRequest` but no reply (`SILENT_DENIAL_CHANNELS`, email only). An
+empty or non-ASCII tag makes the adapter refuse to start, never
+"process everything". A handled message is then moved out of the INBOX
+into `EMAIL_AGENT_FOLDER` (default `INBOX.Agent`, #44): all IMAP calls use
+UIDs, `UID MOVE` else `COPY`+`UID EXPUNGE` (needs UIDPLUS) else no move,
+and never a plain `EXPUNGE`. **No automatic purge, by the user's explicit
+decision (2026-09-20).** Full description: `docs/ARCHITECTURE.md`, "Email
+on a shared mailbox". Planned evolution, a dedicated bot address that
+makes the tag unnecessary: #42.
+
+- Email today is a chat with the user's default agent only. Agent
+  creation/editing goes through `./start.sh --admin` or the Admin API;
+  there is no command parsing in messages (the user first assumed
+  agents could be created by mail).
+- Verified: 35 pytest passed; 3 mutations of the code (RFC822 fetch,
+  no client-side subject check, replying to email denials) each made
+  the new tests fail, so they test the rule; a read-only IMAP probe on
+  the live OVH mailbox accepted `SEARCH UNSEEN SUBJECT "[agent]"`
+  (`OK`, 0 matches, 1 unread message in total left untouched).
+- **Live test, 2026-09-20** (real OVH mailbox, real DB, native
+  `llama-server` with a substitute model, email adapter only, IMAP
+  SEARCH/FETCH/STORE logged): 2 tagged mails from `montezuma@outlook.fr`
+  -> 2 email replies (`action_logs` id 3/4 and 5/6, user 2 / agent 2),
+  both mails flagged Seen. The only non-empty SEARCH returned id 130,
+  and the only FETCH (`BODY.PEEK[]`) and STORE (`+FLAGS \Seen`) hit
+  id 130. An untagged mail from the same *authorized* address (INBOX id
+  131) stayed unseen, no `action_log`, `access_requests` still 2.
+  The user confirmed receiving the replies in the Outlook inbox
+  (2026-09-20). INBOX ids 127 and 128 were found Seen
+  after the first test; who set that is unknown (the code cannot have
+  fetched them, the server-side tag SEARCH did not match them).
+- **Live test of the folder move (#44), 2026-09-20**, real mailbox, real
+  Llama 3.1 8B, every IMAP command logged: the two earlier tagged mails
+  (UIDs 415 and 416, sender checked first) were filed with the adapter's
+  own helpers, INBOX 131 -> 129 messages, `INBOX.Agent` 0 -> 2. Then a
+  new `[agent] test 3` (UID 418): the adapter issued SEARCH, FETCH
+  (`BODY.PEEK[]`), STORE `\Seen`, LIST, SUBSCRIBE, `UID MOVE`, all on
+  UID 418 only, 0 plain EXPUNGE, 0 errors. Result: INBOX 129 messages /
+  0 unseen / 0 tagged left, `INBOX.Agent` 3 messages, `action_logs` id
+  7 (inbound) and 8 (outbound) 2.55 s apart, `access_requests` still 2.
+  The two untagged test mails stayed in the INBOX. The poller's 15-minute
+  window had expired before the mail arrived the first time: it was
+  restarted, the mail was still eligible. The user confirmed receiving
+  the replies in the Outlook inbox.
+- The test identity (user id=2, identity id=2, `chat`) is still in the
+  real DB.
+- **Open, not fixed:** `alembic/env.py` calls `fileConfig()` with
+  `disable_existing_loggers=True`, so after `init_db()` the
+  `channelagent` logger is disabled and the root level is WARNING
+  (verified: `disabled=True`, `isEnabledFor(INFO)=False`). The app's own
+  INFO logs are most likely silent in normal runs. The standard fix is
+  `config.attributes["configure_logger"] = False` in
+  `_run_migrations_sync` and an `if` around `fileConfig` in `env.py`.
+- **Missing model:** `MODEL_FILE` in `.env` points to
+  `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`, which no longer exists in
+  `Hermes/macos-arm64/models/` (only `.DS_Store`), so `./start.sh`
+  cannot start `llama-server` as configured.
+- The real local DB was recreated on 2026-09-19 (1 user, 1 Telegram
+  identity, 2 Telegram `action_logs`), so the rows cited in #28's
+  closing comment (user id=2, email `action_logs` id=1/2) no longer
+  exist there. #28 was not reopened; its evidence cannot be re-derived.
