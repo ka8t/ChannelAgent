@@ -11,7 +11,7 @@ State at pause, verified facts, not narrative:
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
   miscount): **34 closed, 33 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **459 passed, 0 failed** (24 at pause; the rest added on
+- `pytest`: **480 passed, 0 failed** (24 at pause; the rest added on
   2026-09-20 for the email rules, #39, #40, #45, #52 and the P1 work below).
   `ruff check .`: 0 issues. **The P1 work is in the working tree, NOT
   committed yet** (27 changed files). `ruff check .`: 0 issues.
@@ -1013,3 +1013,26 @@ email password and the API key are not, and `.env` was never tracked.
   at the next start, and **#66 is implemented: `init_db()` now backs up an
   existing database that is behind head into `backups/` (verified copy, 5
   kept, migration refused if the copy fails)**. Restore: see ARCHITECTURE.
+
+
+## #67 key rotation tool and secret scanning (2026-09-20), uncommitted
+
+- `python -m app.admin.rekey` (needs `OLD_ENCRYPTION_KEY`, the new key is
+  `.env`'s): dry run, refuses on unreadable values, prerekey backups, one
+  transaction per database, verification, idempotent. Covers the three
+  encrypted columns and the checkpoint payloads. Procedure and warnings in
+  ARCHITECTURE ("Encryption key: backup, loss and rotation"). Rehearsed on a
+  copy of the real database (11 values). **The rotation of the real files is
+  still to be done by the owner**; until then the exposed key still protects
+  the real data. Delete the `*-prerekey-*.db` copies afterwards.
+- gitleaks: `.gitleaks.toml` (two exact values allowed), `.gitleaks-baseline.json`
+  (the c8a9eaa finding), CI job `secret-scan`. Locally: `docker run --rm -v
+  "$PWD":/repo zricethezav/gitleaks:latest detect --source /repo --redact
+  --config /repo/.gitleaks.toml --baseline-path /repo/.gitleaks-baseline.json`.
+  gitleaks does not catch a key under an unrelated variable name; the
+  Fernet-shape test in `tests/test_no_committed_secrets.py` does.
+- **Priority rule from the user (2026-09-20): finish every ticket of a
+  priority before starting a lower one** (all P1 before any P2). #55 (P2) was
+  started and set aside: its tests are drafted outside the repo. Only P1 work
+  remains open in the sense of "owner steps": the real key rotation, the live
+  checks of #61, and the epics #6 (needs #29) and #35.

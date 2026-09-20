@@ -15,7 +15,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 FERNET_SHAPE = re.compile(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}=(?![A-Za-z0-9_-])")
-ALLOWED = {"tests/conftest.py"}
+ALLOWED = {"tests/conftest.py", ".gitleaks.toml"}  # the throwaway key, and its allow-list
 
 
 def _tracked_files() -> list[str]:

@@ -57,3 +57,20 @@ jobs:
           test "$(code -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8700/docs)" = 200
           docker logs ca-ci
           docker rm -f ca-ci
+
+  secret-scan:
+    # The real ENCRYPTION_KEY was once committed as a test default (#67), found
+    # by hand. This job scans the whole history on every push. The single known
+    # historical finding is in .gitleaks-baseline.json; two exact non-secret
+    # values are allowed in .gitleaks.toml.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan the whole history for secrets (gitleaks)
+        run: |
+          docker run --rm -v "$PWD":/repo zricethezav/gitleaks:latest detect \
+            --source /repo --redact --no-banner \
+            --config /repo/.gitleaks.toml --baseline-path /repo/.gitleaks-baseline.json

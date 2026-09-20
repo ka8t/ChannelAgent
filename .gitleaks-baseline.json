@@ -1,0 +1,23 @@
+[
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+    "StartLine": 10,
+    "EndLine": 10,
+    "StartColumn": 25,
+    "EndColumn": 87,
+    "Match": "ENCRYPTION_KEY\", \"REDACTED\"",
+    "Secret": "REDACTED",
+    "File": "tests/conftest.py",
+    "SymlinkFile": "",
+    "Commit": "c8a9eaa385f241d82f29c5158d133d2fd5d4219d",
+    "Link": "https://github.com/ka8t/ChannelAgent/blob/c8a9eaa385f241d82f29c5158d133d2fd5d4219d/tests/conftest.py#L10",
+    "Entropy": 4.9251184,
+    "Author": "Karim",
+    "Email": "mac@MacBook-Pro-M1.local",
+    "Date": "2026-09-18T09:04:47Z",
+    "Message": "Add pytest suite: encryption round-trip and Auth Node integration tests (#30, #31)",
+    "Tags": [],
+    "Fingerprint": "c8a9eaa385f241d82f29c5158d133d2fd5d4219d:tests/conftest.py:generic-api-key:10"
+  }
+]

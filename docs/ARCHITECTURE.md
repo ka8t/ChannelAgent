@@ -303,6 +303,45 @@ with `API_BIND_ADDRESS=0.0.0.0` the LAN address answers `401`. The native
 run behaves the same (`127.0.0.1:port` by default, `*:port` when
 `API_SERVER_HOST=0.0.0.0`).
 
+### Encryption key: backup, loss and rotation
+
+`ENCRYPTION_KEY` (in `.env`, never in the database or in git) encrypts the
+conversation text of the audit trail, the first message of access requests,
+stored email addresses and the conversation checkpoints. **Losing it makes
+all of that unreadable for good**: keep a copy of the key in a password
+manager, apart from the data. Restoring a backup of the database needs the key
+that was current when the backup was made.
+
+**Rotating the key** (`python -m app.admin.rekey`, #67). The new key is the one
+in `.env`, the old one is passed in `OLD_ENCRYPTION_KEY`. With the application
+stopped:
+
+```bash
+docker compose down                                   # 1. stop it
+OLD=$(grep '^ENCRYPTION_KEY=' .env | cut -d= -f2-)     # 2. keep the old key
+NEW=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+./start.sh --set ENCRYPTION_KEY="$NEW"                # 3. the new key goes in .env
+source .venv/bin/activate
+OLD_ENCRYPTION_KEY="$OLD" python -m app.admin.rekey --dry-run   # 4. see the counts
+OLD_ENCRYPTION_KEY="$OLD" python -m app.admin.rekey             # 5. rotate
+docker compose up -d                                  # 6. start again
+```
+
+What it does, in this order: it classifies every value (readable with the old
+key, already on the new key, or unreadable by both) without writing; it
+**refuses to write anything if a value is unreadable** (`--allow-unreadable`
+leaves those as they are); it copies both databases into `backups/` as
+`*-prerekey-*.db` (never rotated away); it rewrites everything in one
+transaction per database; then it reads every value again and requires 0 still
+readable with the old key. It can be run twice, the second time changes
+nothing. **The prerekey copies are still encrypted with the old key**: delete
+them once the rotation is verified, or the old key keeps protecting nothing
+that matters but still opens them.
+
+A key that was committed or leaked must be rotated even though the new key
+protects new data only from that moment: anyone who holds the old key and an
+old copy of the data (a backup, an old volume) can still read that copy.
+
 ### Audit trail and log search
 
 Every inbound and outbound message is recorded in `action_logs`, tied to

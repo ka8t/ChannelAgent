@@ -71,9 +71,40 @@ def _verify(source: Path, target: Path) -> None:
 
 
 def _prune(directory: Path, stem: str, keep: int) -> None:
-    for old in sorted(directory.glob(f"{stem}-*.db"))[:-keep]:
+    """Only migration backups are rotated: a "prerekey" copy is the way back
+    from a key rotation and is never deleted automatically.
+    """
+    candidates = [p for p in directory.glob(f"{stem}-*.db") if "-prerekey-" not in p.name]
+    for old in sorted(candidates)[:-keep]:
         old.unlink()
         logger.info("Removed the old migration backup %s", old.name)
+
+
+def make_backup(path: Path, label: str) -> Path:
+    """Copy `path` into `backups/` next to it with SQLite's online backup API,
+    verify the copy, and return it. Raises BackupError (and leaves no bad copy)
+    if it cannot be made or does not check out.
+    """
+    directory = path.parent / BACKUP_DIR_NAME
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    target = directory / f"{path.stem}-{label}-{stamp}.db"
+    src = sqlite3.connect(path)
+    dst = sqlite3.connect(target)
+    try:
+        src.backup(dst)
+    except sqlite3.Error as exc:
+        target.unlink(missing_ok=True)
+        raise BackupError(f"could not back up {path.name}: {exc}") from exc
+    finally:
+        dst.close()
+        src.close()
+    try:
+        _verify(path, target)
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+    return target
 
 
 def backup_before_migration(database_url: str, head_revision: str, keep: int) -> Path | None:
@@ -91,28 +122,13 @@ def backup_before_migration(database_url: str, head_revision: str, keep: int) ->
     if current == head_revision or (current is None and not _has_tables(path)):
         return None
 
-    directory = path.parent / BACKUP_DIR_NAME
-    directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
-    target = directory / f"{path.stem}-{current or 'none'}-{stamp}.db"
-    src = sqlite3.connect(path)
-    dst = sqlite3.connect(target)
-    try:
-        src.backup(dst)
-    except sqlite3.Error as exc:
-        target.unlink(missing_ok=True)
-        raise BackupError(f"could not back up {path.name} before migrating: {exc}") from exc
-    finally:
-        dst.close()
-        src.close()
-    try:
-        _verify(path, target)
-    except Exception:
-        target.unlink(missing_ok=True)
-        raise
+    target = make_backup(path, current or "none")
     logger.info(
         "Backed up %s to %s before migrating from %s to %s",
-        path.name, target, current or "no revision", head_revision,
+        path.name,
+        target,
+        current or "no revision",
+        head_revision,
     )
-    _prune(directory, path.stem, keep)
+    _prune(target.parent, path.stem, keep)
     return target
