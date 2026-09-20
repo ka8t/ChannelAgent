@@ -4,23 +4,28 @@ already covered by the app-level API_SERVER_KEY dependency (see
 app/api/app.py) — nothing in this file re-checks auth.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.admin import service
 from app.api.deps import get_db_session
 from app.api.schemas import (
+    ActionLogOut,
     ChannelIdentityCreate,
     ChannelIdentityOut,
     PermissionGrant,
     PermissionOut,
+    StorageOut,
     UserCreate,
     UserOut,
     UserUpdate,
 )
-from app.db.models import Channel, ChannelIdentity, PermissionKind, User
+from app.db.models import ActionLog, Channel, ChannelIdentity, Direction, PermissionKind, User
 from app.security.auth import grant_permission, revoke_permission
 from app.security.hashing import channel_identifier_key
 
@@ -190,3 +195,47 @@ async def revoke(
     if not revoked:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Permission {kind} was not held")
     await session.commit()
+
+
+# --- Audit trail search (#39) ---
+
+
+@router.get("/logs", response_model=list[ActionLogOut])
+async def search_logs(
+    user_id: int | None = None,
+    agent_id: int | None = None,
+    channel: Channel | None = None,
+    direction: Direction | None = None,
+    since: datetime | None = Query(default=None, description="Inclusive. Naive = UTC."),
+    until: datetime | None = Query(default=None, description="Exclusive. Naive = UTC."),
+    keyword: str | None = Query(default=None, description="Case-insensitive, on decrypted text."),
+    limit: int = Query(default=100, ge=1, le=service.LOG_SEARCH_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[ActionLog]:
+    return await service.search_action_logs(
+        session,
+        user_id=user_id,
+        agent_id=agent_id,
+        channel=channel,
+        direction=direction,
+        since=since,
+        until=until,
+        keyword=keyword,
+        limit=limit,
+        offset=offset,
+    )
+
+
+# --- Storage overview (#40) ---
+
+
+@router.get("/storage", response_model=StorageOut)
+async def storage(session: AsyncSession = Depends(get_db_session)) -> StorageOut:
+    overview = await service.storage_overview(session)
+    return StorageOut(
+        db_size_bytes=overview.db_size_bytes,
+        row_counts=overview.row_counts,
+        oldest_log_at=overview.oldest_log_at,
+        newest_log_at=overview.newest_log_at,
+    )

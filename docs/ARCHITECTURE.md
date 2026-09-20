@@ -199,6 +199,47 @@ encryption key is loaded at runtime from `.env` (`ENCRYPTION_KEY`) and
 is never stored in the database and never committed to Git. See
 `app/security/encryption.py`.
 
+### Audit trail and log search
+
+Every inbound and outbound message is recorded in `action_logs`, tied to
+a user, an agent and a channel, with its text encrypted (same class of
+data as an email address). Searching it (#39) goes through **one**
+function, `app.admin.service.search_action_logs`, called by both front
+ends: `GET /logs` on the Admin API and menu 4 of the console
+(`./start.sh --admin`). Neither holds query logic of its own.
+
+| Filter | Meaning |
+|---|---|
+| `user_id`, `agent_id`, `channel`, `direction` | Exact match. |
+| `since` / `until` | Half-open window: `since` inclusive, `until` exclusive. A naive datetime is UTC, an aware one is converted to UTC. The console reads dates as `YYYY-MM-DD` (UTC) and treats a "to" date as that whole day. |
+| `keyword` | Case-insensitive substring of the **decrypted** text. |
+| `limit`, `offset` | 1 to 500 results (default 100 on the API, 20 in the console); `offset` skips that many *matching* rows. |
+
+All filters are optional and combine with AND. Results are most recent
+first.
+
+**Why the keyword is matched in Python.** Fernet output differs on every
+write, so the ciphertext cannot be searched or compared in SQL. The
+other filters run in SQL, then the keyword is checked on each candidate
+row after decryption, newest first, stopping as soon as `limit` matches
+are found. That is O(n) in the number of rows left by the other filters,
+which is fine for a single user or a small group. No index is built on
+purpose: narrow with user, agent, channel or dates first on a large log.
+
+`GET /logs` returns the decrypted text, so it is only served behind the
+`API_SERVER_KEY` bearer check like every other route.
+
+### Storage overview
+
+`GET /storage` on the Admin API and menu 5 of the console (#40) call one
+function, `app.admin.service.storage_overview`. It reports the size of
+the SQLite file (the main database file only, nothing for a database that
+is not a SQLite file), the exact `COUNT(*)` of every table (`users`,
+`channel_identities`, `permissions`, `access_requests`, `agents`,
+`action_logs`) and the oldest and newest audit-trail timestamps in UTC
+(none while the log is empty). The API leaves the file path out on
+purpose. This is visibility, not a storage engine or a backup tool.
+
 ### Database and migrations
 
 SQLite via SQLAlchemy (async, `aiosqlite`) — matches the "100% local"

@@ -9,10 +9,10 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **39 closed, 6 open** counting #42 (`gh issue list --repo
+  miscount): **37 closed, 17 open** after the 2026-09-20 audit (9 issues created, 4 reopened) and the closing of #39/#40 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **50 passed, 0 failed** (24 at pause, +24 for the shared
-  mailbox rules below, +2 for #45). `ruff check .`: 0 issues.
+- `pytest`: **111 passed, 0 failed** (24 at pause, +24 for the shared
+  mailbox rules below, +2 for #45, +38 for #39, +23 for #40). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -20,24 +20,33 @@ State at pause, verified facts, not narrative:
   verified with real live round trips. Production VPS topology (#21)
   verified with a real containerized Linux `llama-server`.
 
-**Open, in priority order, for next session:**
-1. **#29** Matrix adapter — P2, blocked on real credentials (the user
-   gave only a placeholder example: `@votre_bot:matrix.org`-style).
-2. **#39** Log search — P2, no blocker, ready to implement.
-3. **#40** Storage overview — P3, no blocker, ready to implement.
-4. Epics **#6** and **#35** stay open only because of the above.
-5. Franck's GitHub collaborator invite — blocked on his actual
-   username (his email has no discoverable GitHub account; the API
-   flatly rejects an email in place of a username).
-6. Open question from the user, not yet decided: whether to make
+**Open, in priority order, for next session** (rebuilt after the
+2026-09-20 audit, see the audit section at the end of this file):
+1. **P1 bugs found by the audit:** #49 conversation history lost on
+   restart, #50 foreign keys not enforced (orphans), #51 a failed LLM turn
+   gives no reply / loses the inbound log / consumes the email, #52 Admin
+   API published on every interface over plain HTTP (now serves decrypted
+   logs).
+2. **Reopened, scope not delivered:** #36 (no `/requests` API routes, no
+   `resolved_by`), #37 (no `/agents` API routes, deactivation has no
+   effect), #41 (console: logic in the menu code, no user detail, crashes
+   on bad input), epic #3 (until #49 closes).
+3. **P2:** #53 ("admin has been notified" is false, `admin` permission
+   unused), #54 (agents other than `default` are unreachable, needs a
+   design decision), #46 (missing automated tests).
+4. **P3:** #47 (history never trimmed), #48 (no healthcheck).
+5. **Set aside by the user on 2026-09-20:** #29 Matrix (still blocked on
+   real credentials) and #42 dedicated bot mailbox.
+6. Epics **#6** (only #29 left), **#35** (until #36/#37/#41 close) and
+   **#3** stay open.
+7. **Repository access, facts only, to raise with the user:** `gh api`
+   shows collaborator `FpTargeT` with **push (write)** access, one
+   pending invitation with write permission and no login (created
+   2026-09-19T13:34Z), and Brian's (`hitweb`, read) still pending since
+   2026-09-18. The earlier "Franck not added" note is obsolete.
+8. Open question from the user, not yet decided: whether to make
    `ChannelAgent` public so the deprecation notice added to the public
    `Hermes` repo actually resolves for outside readers.
-7. **#42** Dedicated bot mailbox instead of the shared `contact@` one —
-   P3, planned evolution of the subject-tag rule below.
-8. Closed 2026-09-20: **#43** subject-tag rule and **#44** filing
-   handled mail into `INBOX.Agent` (commit `ec6e6a3`, CI run 35505007958,
-   both jobs success), and **#45** app loggers silenced by alembic
-   (see below).
 
 Read the rest of this file chronologically for the *why* behind any of
 the above — this section is only the *what's left*.
@@ -761,3 +770,98 @@ makes the tag unnecessary: #42.
   identity, 2 Telegram `action_logs`), so the rows cited in #28's
   closing comment (user id=2, email `action_logs` id=1/2) no longer
   exist there. #28 was not reopened; its evidence cannot be re-derived.
+
+
+## #39 log search and #40 storage overview (2026-09-20)
+
+Both follow #35's one-service-layer rule: one function each in
+`app/admin/service.py`, called by a new Admin API route and by the
+console, no logic in either front end.
+
+- **#39** `search_action_logs`, `GET /logs`, console menu 4 (replaces
+  the old "last 20 logs" browse, which ran its own query in the CLI).
+  Filters user, agent, channel, direction, `since` (inclusive), `until`
+  (exclusive), keyword, limit (1-500), offset. **The keyword is matched
+  in Python on the decrypted text**, newest first, stopping at `limit`
+  matches: the column is Fernet ciphertext and cannot be searched in SQL.
+  O(n), documented in the function, no index on purpose. Naive datetimes
+  are UTC, aware ones are converted (SQLite drops the tzinfo, so an
+  unconverted +02:00 value would silently shift the window). The console
+  reads dates as `YYYY-MM-DD` and treats the "to" date as the whole day.
+- **#40** `storage_overview`, `GET /storage`, console menu 5. Size of the
+  main SQLite file, exact `COUNT(*)` per table, oldest/newest log time.
+  The API does not return the file path. `sqlite_file_path()` was pulled
+  out of `app/db/session.py` and is reused.
+- **A defect found by the tests, not by inspection:** the console read
+  "0 results" as "blank" (`0 or 20`) and silently used 20. Fixed with an
+  explicit `None` check.
+- Verified: `pytest` 111 passed, 0 failed, `ruff` 0 issues. Deliberate
+  mutations, all caught: case-sensitive keyword (9 tests failed), `until`
+  inclusive (1), timezone ignored (2), offset ignored (3), user filter
+  dropped (7), keyword matched on the wrong value (9); storage: a table
+  not counted (7), oldest/newest swapped (3), size reported as 0 (4),
+  timestamps left naive (1). A spy test proves the API and the console
+  call the same service function in both features.
+- Real data, real database (8 action logs, 2 users): `./start.sh
+  --admin`, the API (401 without key, 200 with) and an independent count
+  (raw SQLite + Fernet decrypt) agree: the 6 email rows containing
+  "question" are ids 3-8; row counts users/identities/permissions/
+  requests/agents/logs = 2/2/2/2/2/8; size 65536 bytes by `ls`, `stat`,
+  console and API; same oldest/newest timestamps.
+
+
+## Audit of closed issues and epics (2026-09-20)
+
+The user asked to double-check every closed issue and to find what the
+epics promised without an issue, a test or a validation. Method: re-run
+the end-to-end checks on the current code, then compare each epic's
+"Done when" and each closed issue's *scope* (not only its acceptance
+criteria) with what the code does, measuring instead of reading.
+
+**What held, re-verified today:** a 43-check end-to-end script (temporary
+DB, mock LLM) 43/43; `pytest` 111 passed; `ruff` 0 issues; `alembic check`
+no drift; fresh `docker compose build`, container fail-fast without
+`ENCRYPTION_KEY`, container boot with credentials emptied
+(401 without key, 200 with, on `/users`, `/logs`, `/storage`, `/docs`);
+a real completion from inside the container through
+`host.docker.internal:8080` (real Llama 3.1 8B, reply `'pong'`, #20);
+app-logger output present inside the container (#45); CI success on the
+last three pushed commits; prod compose overlay resolves
+(`LLAMA_SERVER_URL=http://llama-server:8080`, `service_healthy`), **not**
+re-run end to end (last real run 2026-09-18).
+
+**What did not hold** (each measured, each tracked):
+- Epic #3 "resumes across restarts": 3 turns, restart, next reply `N=1`
+  instead of `N=7` -> #49 (epic reopened).
+- #36: 0 of the 3 promised `/requests` routes, no `resolved_by`.
+  #37: 0 agent routes, and deactivating the default agent did not stop it
+  answering. #41: user logic in the menu code, no user detail, 5 of 6 bad
+  inputs crash the console. All three reopened.
+- `PRAGMA foreign_keys = 0`: an agent for user 999 was accepted; deleting
+  a user left 2 agents and 1 encrypted log behind -> #50.
+- LLM unreachable: no reply, inbound log rolled back, email consumed
+  (already Seen and moved) -> #51.
+- API bound to `0.0.0.0`, published on all host interfaces, HTTP,
+  static key, decrypted logs -> #52.
+- The denial message says an admin was notified (nothing notifies
+  anyone) and `is_admin` is read nowhere -> #53.
+- Agents other than `default` receive nothing -> #54.
+- No automated tests for API CRUD, `/docs` protection, bootstrap,
+  Telegram adapter, `start.sh --set` -> #46. No history trimming -> #47.
+  No healthcheck -> #48.
+- Stale docs fixed: README said no channel adapters were wired and
+  named Ollama/vLLM for production.
+
+**Tooling gotchas learned during the audit (not derivable from code):**
+- In this FastAPI version `app.routes` shows an `_IncludedRouter`, not the
+  included routes: list `router.routes` to inventory endpoints. A first
+  inventory that trusted `app.routes` wrongly showed 2 routes.
+- The RTK hook summarizes `docker logs` output ("22 info messages"), so
+  a grep for a log line finds nothing. Use `rtk proxy docker logs <name>`
+  for the raw lines. That produced a false "the #45 fix does not work in
+  the container" for a few minutes.
+- The shell is zsh: `${4:+--label "$4"}` inside a helper function does not
+  word-split, so 6 of 9 `gh issue create` calls failed silently and only
+  the 3 without that argument were created. Pass explicit flags.
+- `git rev-parse --short A B` fails through the hook ("Needed a single
+  revision"): run it once per ref.

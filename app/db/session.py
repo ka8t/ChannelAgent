@@ -23,6 +23,16 @@ from app.config import get_settings
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+def sqlite_file_path(database_url: str) -> Path | None:
+    """The file behind a SQLite URL, or None for an in-memory or non-SQLite
+    database (there is no file whose size could be reported).
+    """
+    url = make_url(database_url)
+    if url.drivername.startswith("sqlite") and url.database and url.database != ":memory:":
+        return Path(url.database)
+    return None
+
+
 def _ensure_sqlite_dir_exists(database_url: str) -> None:
     """SQLite refuses to create a DB file inside a missing directory —
     ``OperationalError: unable to open database file``, not a clearer
@@ -31,9 +41,9 @@ def _ensure_sqlite_dir_exists(database_url: str) -> None:
     data/), which is exactly why running natively (start.sh --native)
     was the first thing to actually hit it.
     """
-    url = make_url(database_url)
-    if url.drivername.startswith("sqlite") and url.database and url.database != ":memory:":
-        Path(url.database).parent.mkdir(parents=True, exist_ok=True)
+    path = sqlite_file_path(database_url)
+    if path is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
 
 
 @lru_cache

@@ -20,7 +20,7 @@ topology test). The Admin API (epic #5) and the agent/request/logging
 mechanics with an interactive console (`./start.sh --admin`, epic #35)
 are both done. Telegram (#27) and Email (#28) adapters are live and
 verified with real end-to-end round trips; Matrix (#29) is not yet
-implemented, blocked on real credentials. 48 automated tests, 0
+implemented, blocked on real credentials. 111 automated tests, 0
 failing. Full picture, always current: `gh issue list --repo
 ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
 the exact resume checklist.
@@ -31,8 +31,8 @@ the exact resume checklist.
 - Docker
 - On macOS: a local `llama-server` process serving an LLM on port
   8080. ChannelAgent does not run its own inference server; it calls
-  out to this one (native on Mac for development, an
-  Ollama/vLLM container in production — see `docs/ARCHITECTURE.md`).
+  out to this one (native on Mac for development, a containerized
+  `llama-server` in production — see `docs/ARCHITECTURE.md`).
 
 ## Install
 
@@ -101,9 +101,12 @@ Troubleshooting below), then:
 docker compose up --build
 ```
 
-`app/main.py` boots configuration and the database and stays running;
-there are no channel adapters wired in yet (see Status), so it doesn't
-do anything beyond that on its own.
+`app/main.py` boots configuration, the database and the first admin
+(from `TELEGRAM_ALLOWED_USERS`, on an empty database only), then starts
+each part that is configured and logs which ones are disabled: the
+Telegram adapter (needs `TELEGRAM_BOT_TOKEN`), the Email adapter (needs
+`EMAIL_IMAP_HOST`, `EMAIL_USERNAME` and `EMAIL_PASSWORD`) and the Admin
+API (needs `API_SERVER_KEY`). The Matrix adapter is not implemented yet.
 
 `start.sh` still exists for local (non-Docker) development: it copies
 `.env.example` to `.env` if missing, creates a Python virtualenv,
@@ -173,6 +176,27 @@ actual inference round trip through this topology — that needs a real
 Linux `llama-server` binary and a Linux Docker host, neither available
 in this environment (the Mac's own `llama-server` binary is macOS-only
 and won't run in this container).
+
+## Searching the audit trail
+
+Every message the bot receives or sends is logged (text encrypted at
+rest). Search it from the admin console (`./start.sh --admin`, menu 4,
+blank answer = no filter) or from the Admin API:
+
+```bash
+curl -H "Authorization: Bearer $API_SERVER_KEY" \
+  "http://localhost:8700/logs?user_id=1&channel=email&keyword=invoice&since=2026-09-01&limit=20"
+```
+
+Filters: `user_id`, `agent_id`, `channel`, `direction`, `since`
+(inclusive), `until` (exclusive), `keyword` (case-insensitive, matched
+on the decrypted text), `limit` (1 to 500), `offset`. Both front ends
+call the same function, details in `docs/ARCHITECTURE.md`
+("Audit trail and log search").
+
+The same console (menu 5) and API (`GET /storage`) also give a storage
+overview: database size, row count per table, and the time span of the
+audit trail.
 
 ## Database migrations
 
