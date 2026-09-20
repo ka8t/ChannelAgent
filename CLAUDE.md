@@ -11,8 +11,8 @@ State at pause, verified facts, not narrative:
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
   miscount): **37 closed, 17 open** after the 2026-09-20 audit (9 issues created, 4 reopened) and the closing of #39/#40 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **111 passed, 0 failed** (24 at pause, +24 for the shared
-  mailbox rules below, +2 for #45, +38 for #39, +23 for #40). `ruff check .`: 0 issues.
+- `pytest`: **112 passed, 0 failed** (24 at pause, +24 for the shared
+  mailbox rules below, +2 for #45, +39 for #39, +23 for #40). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -66,6 +66,15 @@ the above — this section is only the *what's left*.
 - **Secrets**: never commit `.env` or key material. `ENCRYPTION_KEY`
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
+- **Do not close what is not resolved (user, 2026-09-20: "ne ferme pas
+  si ce n'est pas résolu").** Compare the issue's whole *scope* with the
+  code, not only its acceptance criteria: the 2026-09-20 audit reopened
+  #3, #36, #37 and #41, which had passed their acceptance criteria while
+  parts of their scope were never delivered. Anything undelivered keeps
+  the issue open (finish it, or comment what remains, or split the rest
+  into a new open issue). An epic closes only when every sub-issue and
+  every "Done when" line is met and measured. Never close with a "not
+  covered" caveat.
 - **Never close a GitHub issue unless it is actually implemented and
   verified — and verification means numbers, not narrative.** Two
   rules from the user, the second sharpening the first (2026-09-18):

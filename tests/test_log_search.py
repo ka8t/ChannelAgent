@@ -340,3 +340,66 @@ async def test_api_and_console_call_the_same_service_function(api, populated, mo
     for kwargs in calls:
         assert kwargs["user_id"] == 1 and kwargs["keyword"] == "milk"
     assert api_ids == await _search(user_id=1, keyword="milk") == [6, 2, 1]
+
+
+async def test_keyword_search_over_more_rows_than_one_real_batch(populated):
+    """The batch boundary tests above shrink the batch to 2. This one keeps
+    the real 500-row batch and 1,300 rows, so it crosses two real boundaries.
+    """
+    from app.admin import service
+    from app.db.models import ActionLog
+    from app.db.session import session_scope
+
+    assert service._LOG_SEARCH_BATCH == 500
+    base = datetime(2026, 9, 21, tzinfo=UTC)
+    async with session_scope() as session:
+        for i in range(1300):  # ids 8..1307, after the 7 seeded rows
+            text = f"row {i} needle" if i % 7 == 0 else f"row {i}"
+            if i == 3:
+                text = "row 3 rare"
+            session.add(ActionLog(
+                user_id=1, agent_id=1, channel=Channel.TELEGRAM, direction=Direction.INBOUND,
+                text=text, created_at=base + timedelta(seconds=i),
+            ))
+        await session.commit()
+
+    needle_ids = [8 + i for i in range(1300) if i % 7 == 0]  # oldest first
+    expected_newest_first = needle_ids[::-1]
+    assert len(needle_ids) == 186
+
+    assert await _search(keyword="needle", limit=500) == expected_newest_first
+    assert await _search(keyword="needle", limit=50, offset=100) == expected_newest_first[100:150]
+    assert await _search(keyword="needle", limit=500, offset=180) == expected_newest_first[180:]
+    assert await _search(keyword="needle", limit=10, offset=186) == []
+
+    # An old-only match forces a read of every batch: 1,307 rows = 500 + 500 + 307.
+    async with session_scope() as session:
+        original = session.execute
+        calls = 0
+
+        async def counting(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return await original(*args, **kwargs)
+
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(session, "execute", counting)
+        try:
+            found = await service.search_action_logs(session, keyword="rare")
+        finally:
+            monkey.undo()
+    assert [e.text for e in found] == ["row 3 rare"]
+    assert calls == 3, "1,307 rows must be read as 500 + 500 + 307"
+
+    # The newest matching row is in the first batch: one query is enough.
+    async with session_scope() as session:
+        original = session.execute
+        calls = 0
+        monkey = pytest.MonkeyPatch()
+        monkey.setattr(session, "execute", counting)
+        try:
+            found = await service.search_action_logs(session, keyword="needle", limit=1)
+        finally:
+            monkey.undo()
+    assert [e.id for e in found] == [expected_newest_first[0]]
+    assert calls == 1
