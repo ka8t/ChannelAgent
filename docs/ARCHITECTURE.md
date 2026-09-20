@@ -286,8 +286,35 @@ unless someone decides otherwise (#52).
 | Native (`./start.sh --native`) | Binds to `127.0.0.1` | `API_SERVER_HOST` |
 | Docker (`docker-compose.yml`) | Listens on `0.0.0.0` *inside* the container (`API_SERVER_HOST` is forced there, the published port could not reach it otherwise) and is published on `127.0.0.1` of the host | `API_BIND_ADDRESS` |
 
-`API_SERVER_KEY` must be at least 16 characters, otherwise the API does
-not start and logs why (`openssl rand -hex 32` is a good key).
+`API_SERVER_KEY` must be at least 16 characters and not obviously weak,
+otherwise the API does not start and logs why (`openssl rand -hex 32` is a
+good key). Refused: fewer than 16 characters, fewer than 6 distinct
+characters, a unit of up to 8 characters repeated (`aaaa...`, `abab...`),
+and keys containing a known placeholder (`changeme`, `password`, `your_`,
+`example`, `0123456789`, `abcdefghij`).
+
+**Failed authentication (#58).** Every wrong or missing key is logged at
+WARNING with the source address (never the key). After 10 failures from
+one address inside 60 seconds, every request from that address gets `429`
+until its oldest failure is 60 seconds old, a right key included. The
+counter is in memory (a restart clears it, up to 1024 addresses are
+tracked). Behind Docker's published port, every client may appear with the
+same gateway address: the limit then applies to all of them together, and
+a guesser can lock the administrator out for a minute at a time. Behind a
+reverse proxy the address is the proxy's until forwarded headers are
+supported. There is still one shared key, not one per administrator: who
+did what is recorded as `api` or `console` (#59).
+
+**Rotating API_SERVER_KEY.**
+1. Generate a new key: `openssl rand -hex 32`.
+2. Put it in `.env` (`./start.sh --set API_SERVER_KEY=<value>`).
+3. Restart the application (`docker compose up -d --force-recreate` or
+   restart `./start.sh --native`). The old key stops working at once.
+4. Update every client that used the old one (scripts, tunnels, proxy
+   configuration). Their next call gets `401`, and 10 such calls in a
+   minute from one address trigger the `429` block above.
+Nothing is encrypted with this key, so no data has to be migrated (unlike
+`ENCRYPTION_KEY`, see "Encryption key: backup, loss and rotation").
 
 **Administering from another machine.** Do not publish the port on the
 network as it is: the key travels in a header, in clear. Either open an

@@ -47,11 +47,13 @@ async def isolated_checkpoints(tmp_path, monkeypatch):
     belongs to the test's event loop, is closed when the test ends.
     """
     monkeypatch.setenv("CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.db"))
+    from app.api import deps
     from app.config import get_settings
     from app.db import types
 
     get_settings.cache_clear()
     types.reset_warning_state()
+    deps.reset_failure_state()
     yield
     from app import graph
 

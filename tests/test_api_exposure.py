@@ -49,7 +49,7 @@ def test_env_example_documents_both_addresses_with_loopback_defaults():
 @pytest.mark.parametrize(
     ("key", "acceptable"),
     [(None, False), ("", False), ("short", False), ("x" * 15, False),
-     ("x" * 16, True), ("a" * 64, True)],
+     ("x" * 16, False), ("a" * 64, False), ("Zq8vT3mK9xW2pL7n", True)],
 )
 def test_short_or_missing_api_key_is_not_acceptable(key, acceptable):
     from app.api.deps import api_key_is_acceptable
@@ -95,7 +95,7 @@ async def test_main_starts_uvicorn_on_the_configured_host(
     from app import main as app_main
     from app.config import get_settings
 
-    monkeypatch.setenv("API_SERVER_KEY", "k" * 32)
+    monkeypatch.setenv("API_SERVER_KEY", "Zq8vT3mK9xW2pL7nR4bY6cH1dF5gJ0sA")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")
     monkeypatch.setenv("EMAIL_IMAP_HOST", "")
     if env_host is None:
