@@ -19,9 +19,12 @@ from app.db.session import _ensure_sqlite_dir_exists  # noqa: E402
 # access to the values within the .ini file in use.
 config = context.config
 
-# Interpret the config file for Python logging.
-# This line sets up loggers basically.
-if config.config_file_name is not None:
+# Interpret the config file for Python logging, for the `alembic` command
+# line. When the application runs migrations itself (app/db/session.py's
+# init_db sets configure_logger=False), skip it: fileConfig() disables
+# every existing logger and resets the root level to WARNING, which
+# silenced all of the application's own INFO logs (#45).
+if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
 # DATABASE_URL comes from .env (via app.config), not a value hardcoded

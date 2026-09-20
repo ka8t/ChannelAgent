@@ -9,10 +9,10 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **38 closed, 7 open** counting #42 and #45 (`gh issue list --repo
+  miscount): **39 closed, 6 open** counting #42 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **48 passed, 0 failed** (24 at pause, +24 for the shared
-  mailbox rules below). `ruff check .`: 0 issues.
+- `pytest`: **50 passed, 0 failed** (24 at pause, +24 for the shared
+  mailbox rules below, +2 for #45). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -34,10 +34,10 @@ State at pause, verified facts, not narrative:
    `Hermes` repo actually resolves for outside readers.
 7. **#42** Dedicated bot mailbox instead of the shared `contact@` one —
    P3, planned evolution of the subject-tag rule below.
-8. **#45** `init_db()` silences the app loggers (alembic `fileConfig`),
-   not fixed yet. (**#43** subject-tag rule and **#44** filing handled
-   mail into `INBOX.Agent` were closed 2026-09-20 with commit `ec6e6a3`,
-   CI run 35505007958, both jobs success.)
+8. Closed 2026-09-20: **#43** subject-tag rule and **#44** filing
+   handled mail into `INBOX.Agent` (commit `ec6e6a3`, CI run 35505007958,
+   both jobs success), and **#45** app loggers silenced by alembic
+   (see below).
 
 Read the rest of this file chronologically for the *why* behind any of
 the above — this section is only the *what's left*.
@@ -742,17 +742,21 @@ makes the tag unnecessary: #42.
   the replies in the Outlook inbox.
 - The test identity (user id=2, identity id=2, `chat`) is still in the
   real DB.
-- **Open, not fixed:** `alembic/env.py` calls `fileConfig()` with
-  `disable_existing_loggers=True`, so after `init_db()` the
-  `channelagent` logger is disabled and the root level is WARNING
-  (verified: `disabled=True`, `isEnabledFor(INFO)=False`). The app's own
-  INFO logs are most likely silent in normal runs. The standard fix is
-  `config.attributes["configure_logger"] = False` in
-  `_run_migrations_sync` and an `if` around `fileConfig` in `env.py`.
-- **Missing model:** `MODEL_FILE` in `.env` points to
-  `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`, which no longer exists in
-  `Hermes/macos-arm64/models/` (only `.DS_Store`), so `./start.sh`
-  cannot start `llama-server` as configured.
+- **Fixed (#45, 2026-09-20):** `alembic/env.py` called `fileConfig()`
+  with `disable_existing_loggers=True`, so after `init_db()` the
+  `channelagent` logger was disabled for **every level** (warnings and
+  errors such as "Email poll failed" included, not only INFO) and the
+  root level was WARNING. `_run_migrations_sync` now sets
+  `cfg.attributes["configure_logger"] = False` and `env.py` skips
+  `fileConfig` in that case; the `alembic` command line still configures
+  logging. Verified: `python -m app.main` on a temporary DB logged 0
+  lines from the app logger before the fix and 5 after, and 2 new tests
+  in `tests/test_logging.py` (the bug test fails on the old code).
+- **Missing model, resolved 2026-09-20:** `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`
+  had disappeared from `Hermes/macos-arm64/models/`. Re-downloaded from
+  `bartowski/Meta-Llama-3.1-8B-Instruct-GGUF` (4920739232 bytes, SHA-256
+  `7b064f58...557c` matching Hugging Face's published value) and loaded
+  by `llama-server` with `start.sh`'s flags (health 200, real completion).
 - The real local DB was recreated on 2026-09-19 (1 user, 1 Telegram
   identity, 2 Telegram `action_logs`), so the rows cited in #28's
   closing comment (user id=2, email `action_logs` id=1/2) no longer

@@ -60,6 +60,9 @@ def _run_migrations_sync(database_url: str) -> None:
     cfg = Config(str(_REPO_ROOT / "alembic.ini"))
     cfg.set_main_option("script_location", str(_REPO_ROOT / "alembic"))
     cfg.set_main_option("sqlalchemy.url", database_url)
+    # Keep the application's logging configuration: alembic/env.py would
+    # otherwise call fileConfig() and disable the app's loggers (#45).
+    cfg.attributes["configure_logger"] = False
     upgrade(cfg, "head")
 
 
