@@ -9,10 +9,10 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **37 closed, 17 open** after the 2026-09-20 audit (9 issues created, 4 reopened) and the closing of #39/#40 (`gh issue list --repo
+  miscount): **38 closed, 16 open** after the 2026-09-20 audit (9 issues created, 4 reopened) and the closing of #39, #40, #52 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **112 passed, 0 failed** (24 at pause, +24 for the shared
-  mailbox rules below, +2 for #45, +39 for #39, +23 for #40). `ruff check .`: 0 issues.
+- `pytest`: **126 passed, 0 failed** (24 at pause, +24 for the shared
+  mailbox rules below, +2 for #45, +39 for #39, +23 for #40, +14 for #52). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -24,9 +24,9 @@ State at pause, verified facts, not narrative:
 2026-09-20 audit, see the audit section at the end of this file):
 1. **P1 bugs found by the audit:** #49 conversation history lost on
    restart, #50 foreign keys not enforced (orphans), #51 a failed LLM turn
-   gives no reply / loses the inbound log / consumes the email, #52 Admin
-   API published on every interface over plain HTTP (now serves decrypted
-   logs).
+   gives no reply / loses the inbound log / consumes the email. (#52, the
+   Admin API published on every interface, is fixed, see the end of this
+   file.)
 2. **Reopened, scope not delivered:** #36 (no `/requests` API routes, no
    `resolved_by`), #37 (no `/agents` API routes, deactivation has no
    effect), #41 (console: logic in the menu code, no user detail, crashes
@@ -874,3 +874,31 @@ re-run end to end (last real run 2026-09-18).
   the 3 without that argument were created. Pass explicit flags.
 - `git rev-parse --short A B` fails through the hook ("Needed a single
   revision"): run it once per ref.
+
+
+## #52 Admin API no longer exposed on the network (2026-09-20)
+
+Found by the audit: `app/main.py` bound the API to `0.0.0.0` and
+`docker-compose.yml` published it on every host interface, over plain
+HTTP behind one static key, and since #39 `GET /logs` returns decrypted
+conversations.
+
+- `API_SERVER_HOST` (native, default `127.0.0.1`), `API_BIND_ADDRESS`
+  (compose publish address, default `127.0.0.1`). The Dockerfile and the
+  compose `environment:` set `API_SERVER_HOST=0.0.0.0` **inside** the
+  container: without it the published port cannot reach the API. The
+  compose `environment:` wins over a native-run value in `.env`.
+- `API_SERVER_KEY` shorter than 16 characters: the API does not start and
+  logs an error (the real key is 64 characters, accepted).
+- Verified from the machine's own LAN address (192.168.1.77) and from
+  loopback: default Docker publishing gives `401`/`200` on loopback and a
+  refused connection (`000`) on the LAN address; the control run with
+  `API_BIND_ADDRESS=0.0.0.0` answers `401` on the LAN address, so the
+  check does detect the old exposure. Native run: listens on
+  `127.0.0.1:port` by default, `*:port` with `API_SERVER_HOST=0.0.0.0`.
+  `docker compose config` resolves the port to `host_ip: 127.0.0.1`.
+- 14 new tests (`tests/test_api_exposure.py`); four deliberate defects
+  each caught (main hard-codes `0.0.0.0`, compose publishes on all
+  interfaces, weak-key check removed, container host not set).
+- For remote administration use an SSH tunnel or a TLS reverse proxy,
+  see `docs/ARCHITECTURE.md` ("Admin API exposure").

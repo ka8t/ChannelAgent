@@ -67,6 +67,12 @@ class Settings(BaseSettings):
 
     # Admin API
     api_server_port: int = Field(default=8700, alias="API_SERVER_PORT")
+    # Interface the Admin API binds to (#52). Loopback by default: the API
+    # serves decrypted conversations behind one static key over plain HTTP,
+    # so reaching it from the network must be a deliberate choice. The
+    # Docker image sets 0.0.0.0 *inside* the container, where the host-side
+    # exposure is decided by docker-compose's published address instead.
+    api_server_host: str = Field(default="127.0.0.1", alias="API_SERVER_HOST")
     api_server_key: str | None = Field(default=None, alias="API_SERVER_KEY")
 
 

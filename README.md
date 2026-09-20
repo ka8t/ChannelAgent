@@ -20,7 +20,7 @@ topology test). The Admin API (epic #5) and the agent/request/logging
 mechanics with an interactive console (`./start.sh --admin`, epic #35)
 are both done. Telegram (#27) and Email (#28) adapters are live and
 verified with real end-to-end round trips; Matrix (#29) is not yet
-implemented, blocked on real credentials. 111 automated tests, 0
+implemented, blocked on real credentials. 126 automated tests, 0
 failing. Full picture, always current: `gh issue list --repo
 ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
 the exact resume checklist.
@@ -76,6 +76,15 @@ missing) and fill in:
   created on first use). The `.` separator is the OVH/Dovecot layout, use
   your provider's otherwise. Empty leaves messages in the `INBOX`.
   Nothing is ever deleted or purged automatically.
+- `API_SERVER_KEY`, `API_SERVER_PORT`, `API_SERVER_HOST`,
+  `API_BIND_ADDRESS` — the Admin API. It stays off until `API_SERVER_KEY`
+  is set (at least 16 characters, `openssl rand -hex 32`), and it is
+  reachable **from the local machine only** by default, because it
+  serves decrypted conversations over plain HTTP: `API_SERVER_HOST`
+  (native run) and `API_BIND_ADDRESS` (the address Docker publishes the
+  port on) both default to `127.0.0.1`. To administer remotely use an SSH
+  tunnel or a TLS reverse proxy, see `docs/ARCHITECTURE.md` ("Admin API
+  exposure").
 - `LLAMA_SERVER_URL` — where the LLM gateway is reachable. Defaults to
   `http://host.docker.internal:8080` (the container reaching the Mac
   host's native `llama-server`; see `docs/ARCHITECTURE.md`).

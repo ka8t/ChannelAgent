@@ -199,6 +199,35 @@ encryption key is loaded at runtime from `.env` (`ENCRYPTION_KEY`) and
 is never stored in the database and never committed to Git. See
 `app/security/encryption.py`.
 
+### Admin API exposure
+
+The Admin API serves user, permission and agent data and, since #39, the
+**decrypted text of every conversation**, behind one static bearer key
+over plain HTTP. It is therefore reachable from the local machine only
+unless someone decides otherwise (#52).
+
+| Where it runs | Default | How to change it |
+|---|---|---|
+| Native (`./start.sh --native`) | Binds to `127.0.0.1` | `API_SERVER_HOST` |
+| Docker (`docker-compose.yml`) | Listens on `0.0.0.0` *inside* the container (`API_SERVER_HOST` is forced there, the published port could not reach it otherwise) and is published on `127.0.0.1` of the host | `API_BIND_ADDRESS` |
+
+`API_SERVER_KEY` must be at least 16 characters, otherwise the API does
+not start and logs why (`openssl rand -hex 32` is a good key).
+
+**Administering from another machine.** Do not publish the port on the
+network as it is: the key travels in a header, in clear. Either open an
+SSH tunnel (`ssh -L 8700:127.0.0.1:8700 <host>`) or put a reverse proxy
+that terminates TLS in front of it, on the same host, forwarding to the
+loopback address. Only widen `API_BIND_ADDRESS` or `API_SERVER_HOST` when
+a TLS proxy on another host has to reach it.
+
+Verified on 2026-09-20, from the loopback address and from the machine's
+own LAN address: default Docker publishing answers `401` (no key) and
+`200` (key) on loopback and refuses the connection on the LAN address;
+with `API_BIND_ADDRESS=0.0.0.0` the LAN address answers `401`. The native
+run behaves the same (`127.0.0.1:port` by default, `*:port` when
+`API_SERVER_HOST=0.0.0.0`).
+
 ### Audit trail and log search
 
 Every inbound and outbound message is recorded in `action_logs`, tied to

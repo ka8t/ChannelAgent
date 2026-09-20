@@ -11,6 +11,7 @@ messages through yet.
 import asyncio
 import logging
 
+from app.api.deps import MIN_API_KEY_LENGTH, api_key_is_acceptable
 from app.config import get_settings
 from app.db.bootstrap import bootstrap_admin_from_env
 from app.db.session import init_db, session_scope
@@ -43,18 +44,29 @@ async def main() -> None:
 
     # Matrix adapter (#29) joins `tasks` here once it exists.
 
-    if settings.api_server_key:
+    if not settings.api_server_key:
+        logger.info("API_SERVER_KEY not set — Admin API disabled.")
+    elif not api_key_is_acceptable(settings.api_server_key):
+        logger.error(
+            "API_SERVER_KEY is shorter than %s characters — Admin API NOT started. "
+            "Generate a long random key, for example: openssl rand -hex 32",
+            MIN_API_KEY_LENGTH,
+        )
+    else:
         import uvicorn
 
         from app.api.app import app as admin_api_app
 
         config = uvicorn.Config(
-            admin_api_app, host="0.0.0.0", port=settings.api_server_port, log_level="info"
+            admin_api_app,
+            host=settings.api_server_host,
+            port=settings.api_server_port,
+            log_level="info",
         )
         tasks.append(asyncio.create_task(uvicorn.Server(config).serve()))
-        logger.info("Admin API starting on port %s.", settings.api_server_port)
-    else:
-        logger.info("API_SERVER_KEY not set — Admin API disabled.")
+        logger.info(
+            "Admin API starting on %s:%s.", settings.api_server_host, settings.api_server_port
+        )
 
     if not tasks:
         logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")

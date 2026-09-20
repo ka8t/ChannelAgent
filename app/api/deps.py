@@ -11,6 +11,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.session import get_sessionmaker
 
+MIN_API_KEY_LENGTH = 16
+
+
+def api_key_is_acceptable(key: str | None) -> bool:
+    """A bearer key shorter than this is guessable, and it is the only
+    thing protecting decrypted conversations (#52). The API refuses to
+    start with one instead of running with a weak key.
+    """
+    return bool(key) and len(key) >= MIN_API_KEY_LENGTH
+
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
     async with get_sessionmaker()() as session:

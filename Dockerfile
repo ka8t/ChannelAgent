@@ -21,4 +21,9 @@ COPY alembic/ ./alembic/
 # docker-compose.yml so it survives container recreation.
 RUN mkdir -p /app/data
 
+# Inside the container the Admin API must listen on every interface or the
+# published port cannot reach it. What is exposed to the outside is decided
+# by the port mapping in docker-compose.yml (loopback by default, #52).
+ENV API_SERVER_HOST=0.0.0.0
+
 CMD ["python", "-m", "app.main"]
