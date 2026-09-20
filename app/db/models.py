@@ -66,6 +66,12 @@ class Direction(enum.StrEnum):
     OUTBOUND = "outbound"
 
 
+class ActionStatus(enum.StrEnum):
+    OK = "ok"
+    FAILED = "failed"  # the turn or the delivery failed (#51)
+    DENIED = "denied"  # a known identity without permission wrote in (#38)
+
+
 class RequestStatus(enum.StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
@@ -146,6 +152,14 @@ class ActionLog(Base):
     direction: Mapped[Direction] = mapped_column(_db_enum(Direction), nullable=False)
     # Conversation content — same sensitivity class as ChannelIdentity.raw_address.
     text: Mapped[str] = mapped_column(EncryptedString, nullable=False)
+    # ok, failed (#51) or denied (#38). Rows written before this column
+    # existed are ok.
+    status: Mapped[ActionStatus] = mapped_column(
+        _db_enum(ActionStatus),
+        nullable=False,
+        default=ActionStatus.OK,
+        server_default=ActionStatus.OK.value,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, index=True
     )
@@ -171,3 +185,6 @@ class AccessRequest(Base):
     )
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # Who resolved it: "api" or "console" (one shared API key and no admin
+    # identity, see the admin-audit issue). None while pending.
+    resolved_by: Mapped[str | None] = mapped_column(String(32), default=None)

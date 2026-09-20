@@ -9,17 +9,22 @@ in config["configurable"]. See #17 for wiring the response back to the
 originating channel adapter (not this module's job).
 """
 
+import asyncio
+import logging
+from collections.abc import Iterable
 from typing import Annotated, TypedDict
 
 import httpx
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, convert_to_openai_messages
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
+from app import checkpoints
 from app.config import get_settings
 from app.db.models import Channel
 from app.security.hashing import channel_identifier_key
+
+logger = logging.getLogger("channelagent")
 
 
 class GraphState(TypedDict):
@@ -38,7 +43,15 @@ def build_thread_id(channel: Channel, user_id: str, agent_id: int) -> str:
     maps to the same conversation thread, and two agents belonging to
     the same user never share one.
     """
-    return f"{channel.value}_{channel_identifier_key(channel, user_id)}_{agent_id}"
+    return thread_id_from_key(channel, channel_identifier_key(channel, user_id), agent_id)
+
+
+def thread_id_from_key(channel: Channel, identity_key: str, agent_id: int) -> str:
+    """The same id from an identity key already computed (ChannelIdentity.
+    external_id is exactly that key), so code that only has the database row,
+    such as a user purge (#50), builds the identical thread id.
+    """
+    return f"{channel.value}_{identity_key}_{agent_id}"
 
 
 async def call_llm(state: GraphState) -> GraphState:
@@ -71,11 +84,53 @@ def build_graph() -> StateGraph:
     return graph
 
 
-# Process-wide MemorySaver: fine for a single-container deployment where
-# restart-durability isn't required yet. Revisit (persistent checkpointer
-# backend) if that assumption changes — see epic #3.
-_checkpointer = MemorySaver()
-compiled_graph = build_graph().compile(checkpointer=_checkpointer)
+# The compiled graph and its checkpointer are created on first use (#49): the
+# checkpointer owns an aiosqlite connection, which belongs to the event loop
+# that opened it. Reopened when the configured file changes, closed by
+# close_graph() (application shutdown, and between tests).
+_state: dict = {}
+_lock = asyncio.Lock()
+
+
+async def get_graph():
+    path = checkpoints.checkpoint_db_path()
+    async with _lock:
+        if _state.get("path") != path:
+            await _close_locked()
+            saver = await checkpoints.open_saver(path)
+            graph = build_graph().compile(checkpointer=saver)
+            _state.update(path=path, saver=saver, graph=graph)
+            logger.info("Conversation checkpoints stored in %s", path)
+        return _state["graph"]
+
+
+async def _close_locked() -> None:
+    saver = _state.get("saver")
+    _state.clear()
+    if saver is not None:
+        try:
+            await saver.conn.close()
+        except Exception:
+            logger.debug("Closing the checkpoint database raised, ignoring", exc_info=True)
+
+
+async def close_graph() -> None:
+    async with _lock:
+        await _close_locked()
+
+
+async def delete_threads(thread_ids: Iterable[str]) -> int:
+    """Delete the checkpoints of these conversations. Returns how many thread
+    ids were processed (a thread with no checkpoint is not an error).
+    """
+    ids = list(thread_ids)
+    if not ids:
+        return 0
+    await get_graph()
+    saver = _state["saver"]
+    for thread_id in ids:
+        await saver.adelete_thread(thread_id)
+    return len(ids)
 
 
 async def run_turn(channel: Channel, user_id: str, agent_id: int, text: str) -> str:
@@ -83,7 +138,8 @@ async def run_turn(channel: Channel, user_id: str, agent_id: int, text: str) -> 
     authorization (app/security/auth.py). Returns the assistant's reply.
     """
     thread_id = build_thread_id(channel, user_id, agent_id)
-    result = await compiled_graph.ainvoke(
+    graph = await get_graph()
+    result = await graph.ainvoke(
         {"messages": [HumanMessage(content=text)]},
         config={"configurable": {"thread_id": thread_id}},
     )

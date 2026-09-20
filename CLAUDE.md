@@ -9,10 +9,12 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **34 closed, 28 open** after the 2026-09-20 audit (17 issues created, 4 reopened). #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
+  miscount): **34 closed, 32 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
-- `pytest`: **126 passed, 0 failed** (24 at pause, +24 for the shared
-  mailbox rules below, +2 for #45, +39 for #39, +23 for #40, +14 for #52). `ruff check .`: 0 issues.
+- `pytest`: **378 passed, 0 failed** (24 at pause; the rest added on
+  2026-09-20 for the email rules, #39, #40, #45, #52 and the P1 work below).
+  `ruff check .`: 0 issues. **The P1 work is in the working tree, NOT
+  committed yet** (27 changed files). `ruff check .`: 0 issues.
 - No stray processes (`llama-server`, pollers), no leftover Docker
   containers/images — checked directly, all empty.
 - All P0-critical issues closed. Admin/agent/logging mechanics (#35)
@@ -22,15 +24,18 @@ State at pause, verified facts, not narrative:
 
 **Open, in priority order, for next session** (rebuilt after the
 2026-09-20 audit, see the audit section at the end of this file):
-1. **P1 bugs found by the audit:** #49 conversation history lost on
-   restart, #50 foreign keys not enforced (orphans), #51 a failed LLM turn
-   gives no reply / loses the inbound log / consumes the email. (#52, the
-   Admin API published on every interface, is fixed, see the end of this
-   file.)
-2. **Reopened, scope not delivered:** #36 (no `/requests` API routes, no
-   `resolved_by`), #37 (no `/agents` API routes, deactivation has no
-   effect), #41 (console: logic in the menu code, no user detail, crashes
-   on bad input), epic #3 (until #49 closes).
+1. **P1, implemented 2026-09-20 in the working tree, uncommitted, each
+   with a status comment and its evidence in the issue (closing is the
+   owner's decision):** #49 conversation checkpoints persisted and
+   encrypted, #50 foreign keys enforced and deletion policy, #51 failed
+   turns (status column, apology, bounded email retries), #36 requests
+   API and `resolved_by`, #37 agents API and deactivated agents refuse,
+   #41 console over the service layer and never crashing. Also #39, #40,
+   #45, #52 (implemented earlier, reopened at the user's request).
+2. **New issues from that work:** #63 undecryptable conversation thread
+   needs an admin reset, #64 email delivery failure duplicates a turn on
+   retry, #65 stale and automated access requests, #66 no backup before
+   startup migrations.
 3. **P2:** #53 ("admin has been notified" is false, `admin` permission
    unused), #54 (agents other than `default` are unreachable, needs a
    design decision), #46 (missing automated tests).
@@ -931,3 +936,40 @@ conversations.
   interfaces, weak-key check removed, container host not set).
 - For remote administration use an SSH tunnel or a TLS reverse proxy,
   see `docs/ARCHITECTURE.md` ("Admin API exposure").
+
+
+## P1 work of 2026-09-20 (#50, #51, #49, #36, #37, #41), uncommitted
+
+Everything below is in the working tree; each issue has a status comment
+with numbers. Decisions applied from the open questions (the user asked to
+treat the P1 issues, so the written recommendations were taken and
+recorded in each issue): refuse deleting a user with history plus an
+explicit purge; encrypt the checkpoints in a separate file; email retries
+bounded to 3 then `<folder>.Failed`; `resolved_by` is `api` or `console`.
+
+- **Schema:** two Alembic migrations, `bcf3aa387f5e` (`action_logs.status`)
+  and `5527b11034f7` (`access_requests.resolved_by`), tested on a copy of
+  the real database (upgrade, `alembic check`, downgrade, upgrade).
+  **Starting the console or the app applies pending migrations, so a
+  "read-only" check against the real database changed its file.** Both
+  migrations are now applied to the real `data/channelagent.db`
+  (integrity ok, same row counts). Tracked in #66.
+- **New module `app/checkpoints.py`**, `langgraph-checkpoint-sqlite` in
+  `requirements.txt`. The graph is created lazily by `get_graph()` and
+  must be closed with `close_graph()`: the aiosqlite connection runs a
+  non-daemon thread, so **a script or console that opened it and forgot to
+  close it never exits** (found when a verification script hung, and the
+  console after a purge). The checkpoint file is in WAL mode (three files).
+- **Tests:** `tests/conftest.py` has an autouse fixture giving every test
+  its own `CHECKPOINT_DB_PATH` and closing the graph, so no test can write
+  into the real `data/`. Console scripted answers now include a `Status`
+  prompt after `Direction`.
+- **Found by running against real data, not by synthetic tests:** approving
+  the real pending request 1 returned HTTP 500 because the identity had been
+  added by hand; the console does not crash on bad input (5 of 6 probes
+  crashed before); the RTK hook summarizes `docker logs` (use `rtk proxy`).
+- Real-mailbox check of #51 with the LLM stopped: a tagged mail from the
+  bot's own address stayed unread for 2 polls and was filed in
+  `INBOX.Agent.Failed` at the 3rd; the folder and the mail were deleted
+  afterwards. The bot must never be authorized for its own address when a
+  reply would loop (the reply keeps the tag): that test sent no reply.

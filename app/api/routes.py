@@ -1,21 +1,24 @@
-"""Admin API routes (#23, #24): CRUD for users and their channel
-identities, and grant/revoke for permissions. Every route here is
-already covered by the app-level API_SERVER_KEY dependency (see
-app/api/app.py) — nothing in this file re-checks auth.
+"""Admin API routes. Every route is covered by the app-level API_SERVER_KEY
+dependency (see app/api/app.py), and none holds business logic: each calls
+the same app.admin.service function the admin console calls (#35's
+one-service-layer rule). Service errors become HTTP statuses in one place,
+the exception handlers of app/api/app.py: NotFoundError 404, ConflictError
+409, InvalidInputError 422.
 """
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.admin import service
 from app.api.deps import get_db_session
 from app.api.schemas import (
+    AccessRequestOut,
     ActionLogOut,
+    AgentCreate,
+    AgentOut,
+    AgentUpdate,
     ChannelIdentityCreate,
     ChannelIdentityOut,
     PermissionGrant,
@@ -25,30 +28,21 @@ from app.api.schemas import (
     UserOut,
     UserUpdate,
 )
-from app.db.models import ActionLog, Channel, ChannelIdentity, Direction, PermissionKind, User
-from app.security.auth import grant_permission, revoke_permission
-from app.security.hashing import channel_identifier_key
+from app.db.models import (
+    ActionLog,
+    ActionStatus,
+    Agent,
+    Channel,
+    ChannelIdentity,
+    Direction,
+    PermissionKind,
+    RequestStatus,
+    User,
+)
 
 router = APIRouter()
 
-
-async def _get_user_or_404(session: AsyncSession, user_id: int) -> User:
-    user = await session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"No user with id {user_id}")
-    return user
-
-
-async def _get_channel_identity_or_404(
-    session: AsyncSession, user_id: int, channel_identity_id: int
-) -> ChannelIdentity:
-    identity = await session.get(ChannelIdentity, channel_identity_id)
-    if identity is None or identity.user_id != user_id:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            f"No channel identity {channel_identity_id} for user {user_id}",
-        )
-    return identity
+API_ACTOR = "api"
 
 
 # --- Users ---
@@ -58,41 +52,41 @@ async def _get_channel_identity_or_404(
 async def create_user(
     body: UserCreate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
-    user = User(display_name=body.display_name)
-    session.add(user)
+    user = await service.create_user(session, body.display_name)
     await session.commit()
-    await session.refresh(user)
     return user
 
 
 @router.get("/users", response_model=list[UserOut])
 async def list_users(session: AsyncSession = Depends(get_db_session)) -> list[User]:
-    return list((await session.execute(select(User))).scalars().all())
+    return await service.list_users(session)
 
 
 @router.get("/users/{user_id}", response_model=UserOut)
 async def get_user(user_id: int, session: AsyncSession = Depends(get_db_session)) -> User:
-    return await _get_user_or_404(session, user_id)
+    return await service.get_user(session, user_id)
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)
 async def update_user(
     user_id: int, body: UserUpdate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
-    user = await _get_user_or_404(session, user_id)
-    if body.display_name is not None:
-        user.display_name = body.display_name
-    if body.is_active is not None:
-        user.is_active = body.is_active
+    user = await service.update_user(
+        session, user_id, display_name=body.display_name, is_active=body.is_active
+    )
     await session.commit()
-    await session.refresh(user)
     return user
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_user(user_id: int, session: AsyncSession = Depends(get_db_session)) -> None:
-    user = await _get_user_or_404(session, user_id)
-    await session.delete(user)  # cascades to channel_identities and permissions
+async def delete_user(
+    user_id: int,
+    purge: bool = Query(
+        default=False, description="Also delete the user's agents, audit trail and conversations."
+    ),
+    session: AsyncSession = Depends(get_db_session),
+) -> None:
+    await service.delete_user(session, user_id, purge=purge)
     await session.commit()
 
 
@@ -107,21 +101,8 @@ async def delete_user(user_id: int, session: AsyncSession = Depends(get_db_sessi
 async def add_channel_identity(
     user_id: int, body: ChannelIdentityCreate, session: AsyncSession = Depends(get_db_session)
 ) -> ChannelIdentity:
-    await _get_user_or_404(session, user_id)
-    external_id = channel_identifier_key(body.channel, body.identifier)
-    raw_address = body.identifier if body.channel is Channel.EMAIL else None
-    identity = ChannelIdentity(
-        user_id=user_id, channel=body.channel, external_id=external_id, raw_address=raw_address
-    )
-    session.add(identity)
-    try:
-        await session.commit()
-    except IntegrityError as exc:
-        await session.rollback()
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "This channel identity is already linked to a user"
-        ) from exc
-    await session.refresh(identity)
+    identity = await service.add_channel_identity(session, user_id, body.channel, body.identifier)
+    await session.commit()
     return identity
 
 
@@ -129,9 +110,7 @@ async def add_channel_identity(
 async def list_channel_identities(
     user_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> list[ChannelIdentity]:
-    await _get_user_or_404(session, user_id)
-    stmt = select(ChannelIdentity).where(ChannelIdentity.user_id == user_id)
-    return list((await session.execute(stmt)).scalars().all())
+    return await service.list_channel_identities(session, user_id)
 
 
 @router.delete(
@@ -140,8 +119,7 @@ async def list_channel_identities(
 async def delete_channel_identity(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> None:
-    identity = await _get_channel_identity_or_404(session, user_id, channel_identity_id)
-    await session.delete(identity)
+    await service.remove_channel_identity(session, user_id, channel_identity_id)
     await session.commit()
 
 
@@ -159,8 +137,9 @@ async def grant(
     body: PermissionGrant,
     session: AsyncSession = Depends(get_db_session),
 ) -> PermissionOut:
-    identity = await _get_channel_identity_or_404(session, user_id, channel_identity_id)
-    permission = await grant_permission(session, identity, body.kind)
+    permission = await service.grant_identity_permission(
+        session, user_id, channel_identity_id, body.kind
+    )
     await session.commit()
     return PermissionOut.model_validate(permission)
 
@@ -172,12 +151,8 @@ async def grant(
 async def list_permissions(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> list[PermissionOut]:
-    identity = await _get_channel_identity_or_404(session, user_id, channel_identity_id)
-    stmt = select(ChannelIdentity).where(ChannelIdentity.id == identity.id).options(
-        selectinload(ChannelIdentity.permissions)
-    )
-    identity = (await session.execute(stmt)).scalar_one()
-    return [PermissionOut.model_validate(p) for p in identity.permissions]
+    permissions = await service.list_identity_permissions(session, user_id, channel_identity_id)
+    return [PermissionOut.model_validate(p) for p in permissions]
 
 
 @router.delete(
@@ -190,11 +165,73 @@ async def revoke(
     kind: PermissionKind,
     session: AsyncSession = Depends(get_db_session),
 ) -> None:
-    identity = await _get_channel_identity_or_404(session, user_id, channel_identity_id)
-    revoked = await revoke_permission(session, identity, kind)
-    if not revoked:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Permission {kind} was not held")
+    await service.revoke_identity_permission(session, user_id, channel_identity_id, kind)
     await session.commit()
+
+
+# --- Access requests (#36) ---
+
+
+@router.get("/requests", response_model=list[AccessRequestOut])
+async def list_requests(
+    status_filter: str = Query(
+        default="pending", alias="status", pattern="^(pending|approved|denied|all)$"
+    ),
+    session: AsyncSession = Depends(get_db_session),
+):
+    wanted = None if status_filter == "all" else RequestStatus(status_filter)
+    return await service.list_requests(session, wanted)
+
+
+@router.post("/requests/{request_id}/approve", response_model=UserOut)
+async def approve_request(request_id: int, session: AsyncSession = Depends(get_db_session)) -> User:
+    user = await service.approve_request(session, request_id, resolved_by=API_ACTOR)
+    await session.commit()
+    return user
+
+
+@router.post("/requests/{request_id}/deny", status_code=status.HTTP_204_NO_CONTENT)
+async def deny_request(request_id: int, session: AsyncSession = Depends(get_db_session)) -> None:
+    await service.deny_request(session, request_id, resolved_by=API_ACTOR)
+    await session.commit()
+
+
+# --- Agents (#37): an admin can edit any user's agent ---
+
+
+@router.get("/users/{user_id}/agents", response_model=list[AgentOut])
+async def list_agents(user_id: int, session: AsyncSession = Depends(get_db_session)) -> list[Agent]:
+    return await service.list_agents(session, user_id)
+
+
+@router.post(
+    "/users/{user_id}/agents", response_model=AgentOut, status_code=status.HTTP_201_CREATED
+)
+async def create_agent(
+    user_id: int, body: AgentCreate, session: AsyncSession = Depends(get_db_session)
+) -> Agent:
+    agent = await service.create_agent(session, user_id, body.name)
+    await session.commit()
+    return agent
+
+
+@router.get("/agents/{agent_id}", response_model=AgentOut)
+async def get_agent(agent_id: int, session: AsyncSession = Depends(get_db_session)) -> Agent:
+    return await service.get_agent(session, agent_id)
+
+
+@router.patch("/agents/{agent_id}", response_model=AgentOut)
+async def update_agent(
+    agent_id: int, body: AgentUpdate, session: AsyncSession = Depends(get_db_session)
+) -> Agent:
+    """Rename and/or activate or deactivate, whoever owns the agent."""
+    agent = await service.get_agent(session, agent_id)
+    if body.name is not None:
+        agent = await service.rename_agent(session, agent_id, body.name)
+    if body.is_active is not None:
+        agent = await service.set_agent_active(session, agent_id, body.is_active)
+    await session.commit()
+    return agent
 
 
 # --- Audit trail search (#39) ---
@@ -206,6 +243,7 @@ async def search_logs(
     agent_id: int | None = None,
     channel: Channel | None = None,
     direction: Direction | None = None,
+    status: ActionStatus | None = None,
     since: datetime | None = Query(default=None, description="Inclusive. Naive = UTC."),
     until: datetime | None = Query(default=None, description="Exclusive. Naive = UTC."),
     keyword: str | None = Query(default=None, description="Case-insensitive, on decrypted text."),
@@ -219,6 +257,7 @@ async def search_logs(
         agent_id=agent_id,
         channel=channel,
         direction=direction,
+        status=status,
         since=since,
         until=until,
         keyword=keyword,

@@ -33,6 +33,10 @@ class Settings(BaseSettings):
         default="http://host.docker.internal:8080", alias="LLAMA_SERVER_URL"
     )
     llama_ctx_size: int = Field(default=65536, alias="LLAMA_CTX_SIZE")
+    # Conversation checkpoints (#49). A separate SQLite file, so Alembic keeps
+    # owning only the application's tables and the checkpointer its own.
+    # Empty: "checkpoints.db" next to the main SQLite database file.
+    checkpoint_db_path: str | None = Field(default=None, alias="CHECKPOINT_DB_PATH")
     model_file: str | None = Field(default=None, alias="MODEL_FILE")
 
     # Telegram adapter

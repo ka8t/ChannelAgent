@@ -33,3 +33,19 @@ def fresh_db(tmp_path, monkeypatch):
     get_settings.cache_clear()
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+async def isolated_checkpoints(tmp_path, monkeypatch):
+    """Every test gets its own checkpoint file (#49), so no test can write
+    into the real data/ directory, and the checkpoint connection, which
+    belongs to the test's event loop, is closed when the test ends.
+    """
+    monkeypatch.setenv("CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.db"))
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    from app import graph
+
+    await graph.close_graph()

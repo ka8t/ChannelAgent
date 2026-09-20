@@ -11,7 +11,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from app.db.models import Channel, Direction, PermissionKind
+from app.db.models import ActionStatus, Channel, Direction, PermissionKind, RequestStatus
 
 
 class UserCreate(BaseModel):
@@ -68,6 +68,7 @@ class ActionLogOut(BaseModel):
     agent_id: int
     channel: Channel
     direction: Direction
+    status: ActionStatus
     text: str
     created_at: datetime
 
@@ -81,3 +82,38 @@ class StorageOut(BaseModel):
     row_counts: dict[str, int]
     oldest_log_at: datetime | None
     newest_log_at: datetime | None
+
+
+class AgentCreate(BaseModel):
+    name: str
+
+
+class AgentUpdate(BaseModel):
+    """Only the fields that are given change."""
+
+    name: str | None = None
+    is_active: bool | None = None
+
+
+class AgentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    user_id: int
+    name: str
+    is_active: bool
+
+
+class AccessRequestOut(BaseModel):
+    """`first_message_text` is the decrypted first message of the unknown
+    sender, so this is only served behind the API_SERVER_KEY dependency.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    channel: Channel
+    external_id: str
+    first_message_text: str
+    status: RequestStatus
+    requested_at: datetime
+    resolved_at: datetime | None
+    resolved_by: str | None

@@ -219,7 +219,7 @@ async def test_api_two_filters_return_only_matching_rows_with_decrypted_text(api
     assert [e["id"] for e in body] == [6, 2, 1]
     assert body[2]["text"] == "Please remind me to buy milk"
     assert set(body[0]) == {
-        "id", "user_id", "agent_id", "channel", "direction", "text", "created_at",
+        "id", "user_id", "agent_id", "channel", "direction", "status", "text", "created_at",
     }
     assert body[0]["channel"] == "telegram" and body[0]["direction"] == "inbound"
 
@@ -260,8 +260,8 @@ def _script(monkeypatch, *answers):
 async def test_console_search_combines_filters(populated, monkeypatch, capsys):
     from app.admin import cli
 
-    # user, agent, channel, direction, from, to, keyword, limit
-    _script(monkeypatch, "1", "", "", "", "", "", "milk", "")
+    # user, agent, channel, direction, status, from, to, keyword, limit
+    _script(monkeypatch, "1", "", "", "", "", "", "", "milk", "")
     await cli._menu_logs()
     out = capsys.readouterr().out
     assert "3 result(s)" in out
@@ -273,7 +273,7 @@ async def test_console_search_combines_filters(populated, monkeypatch, capsys):
 async def test_console_to_date_includes_the_whole_day(populated, monkeypatch, capsys):
     from app.admin import cli
 
-    _script(monkeypatch, "", "", "", "", "2026-09-20", "2026-09-20", "", "")
+    _script(monkeypatch, "", "", "", "", "", "2026-09-20", "2026-09-20", "", "")
     await cli._menu_logs()
     out = capsys.readouterr().out
     assert "2 result(s)" in out and "#7 " in out and "#6 " in out and "#5 " not in out
@@ -282,11 +282,11 @@ async def test_console_to_date_includes_the_whole_day(populated, monkeypatch, ca
 async def test_console_reports_no_match_and_limit_reached(populated, monkeypatch, capsys):
     from app.admin import cli
 
-    _script(monkeypatch, "1", "", "", "", "", "", "paris", "")
+    _script(monkeypatch, "1", "", "", "", "", "", "", "paris", "")
     await cli._menu_logs()
     assert "No matching logs." in capsys.readouterr().out
 
-    _script(monkeypatch, "", "", "", "", "", "", "", "2")
+    _script(monkeypatch, "", "", "", "", "", "", "", "", "2")
     await cli._menu_logs()
     out = capsys.readouterr().out
     assert "2 result(s)" in out and "limit reached" in out
@@ -295,13 +295,13 @@ async def test_console_reports_no_match_and_limit_reached(populated, monkeypatch
 @pytest.mark.parametrize(
     "answers",
     [
-        ("abc", "", "", "", "", "", "", ""),
-        ("", "", "fax", "", "", "", "", ""),
-        ("", "", "", "sideways", "", "", "", ""),
-        ("", "", "", "", "20/09/2026", "", "", ""),
-        ("", "", "", "", "", "", "", "abc"),
-        ("", "", "", "", "", "", "", "0"),
-        ("", "", "", "", "", "", "", "501"),
+        ("abc", "", "", "", "", "", "", "", ""),
+        ("", "", "fax", "", "", "", "", "", ""),
+        ("", "", "", "sideways", "", "", "", "", ""),
+        ("", "", "", "", "", "20/09/2026", "", "", ""),
+        ("", "", "", "", "", "", "", "", "abc"),
+        ("", "", "", "", "", "", "", "", "0"),
+        ("", "", "", "", "", "", "", "", "501"),
     ],
 )
 async def test_console_invalid_input_is_reported_not_raised(
@@ -333,7 +333,7 @@ async def test_api_and_console_call_the_same_service_function(api, populated, mo
     assert r.status_code == 200
     api_ids = [e["id"] for e in r.json()]
 
-    _script(monkeypatch, "1", "", "", "", "", "", "milk", "")
+    _script(monkeypatch, "1", "", "", "", "", "", "", "milk", "")
     await cli._menu_logs()
 
     assert len(calls) == 2, "exactly one service call per front end"
@@ -403,3 +403,73 @@ async def test_keyword_search_over_more_rows_than_one_real_batch(populated):
             monkey.undo()
     assert [e.id for e in found] == [expected_newest_first[0]]
     assert calls == 1
+
+
+# --- status filter and display (#51) ---
+
+
+@pytest.fixture
+async def with_statuses(populated):
+    """Row 5 failed, row 7 denied, the others ok."""
+    from sqlalchemy import update
+
+    from app.db.models import ActionLog, ActionStatus
+    from app.db.session import session_scope
+
+    async with session_scope() as session:
+        await session.execute(
+            update(ActionLog).where(ActionLog.id == 5).values(status=ActionStatus.FAILED)
+        )
+        await session.execute(
+            update(ActionLog).where(ActionLog.id == 7).values(status=ActionStatus.DENIED)
+        )
+        await session.commit()
+
+
+async def test_status_filter(with_statuses):
+    from app.db.models import ActionStatus
+
+    assert await _search(status=ActionStatus.FAILED) == [5]
+    assert await _search(status=ActionStatus.DENIED) == [7]
+    assert await _search(status=ActionStatus.OK) == [6, 4, 3, 2, 1]
+    assert await _search(status=ActionStatus.FAILED, user_id=1) == []
+    assert await _search(status=ActionStatus.DENIED, keyword="milk") == [7]
+
+
+async def test_new_rows_default_to_ok(populated):
+    from sqlalchemy import select
+
+    from app.db.models import ActionLog, ActionStatus
+    from app.db.session import session_scope
+
+    async with session_scope() as session:
+        statuses = {e.status for e in (await session.execute(select(ActionLog))).scalars()}
+    assert statuses == {ActionStatus.OK}
+
+
+async def test_api_status_filter_and_field(api, with_statuses):
+    r = await api.get("/logs", params={"status": "failed"}, headers=AUTH)
+    assert [(e["id"], e["status"]) for e in r.json()] == [(5, "failed")]
+    r = await api.get("/logs", params={"status": "denied", "keyword": "milk"}, headers=AUTH)
+    assert [(e["id"], e["status"]) for e in r.json()] == [(7, "denied")]
+    assert (await api.get("/logs", params={"status": "weird"}, headers=AUTH)).status_code == 422
+
+
+async def test_console_status_filter_and_flag(with_statuses, monkeypatch, capsys):
+    from app.admin import cli
+
+    # user, agent, channel, direction, status, from, to, keyword, limit
+    _script(monkeypatch, "", "", "", "", "failed", "", "", "", "")
+    await cli._menu_logs()
+    out = capsys.readouterr().out
+    assert "1 result(s)" in out and "#5 " in out and "[failed]" in out
+
+    _script(monkeypatch, "", "", "", "", "", "", "", "", "")
+    await cli._menu_logs()
+    out = capsys.readouterr().out
+    assert "[failed]" in out and "[denied]" in out
+    assert out.count("[ok]") == 0, "ok rows carry no flag"
+
+    _script(monkeypatch, "", "", "", "", "weird", "", "", "", "")
+    await cli._menu_logs()
+    assert "Invalid input, nothing searched." in capsys.readouterr().out

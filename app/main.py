@@ -15,6 +15,7 @@ from app.api.deps import MIN_API_KEY_LENGTH, api_key_is_acceptable
 from app.config import get_settings
 from app.db.bootstrap import bootstrap_admin_from_env
 from app.db.session import init_db, session_scope
+from app.graph import close_graph, get_graph
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("channelagent")
@@ -25,6 +26,7 @@ async def main() -> None:
     await init_db()
     async with session_scope() as session:
         await bootstrap_admin_from_env(session)
+    await get_graph()  # opens (and creates) the checkpoint database now, not on the first message
     logger.info("ChannelAgent started. LLM gateway: %s", settings.llama_server_url)
 
     tasks = []
@@ -68,12 +70,15 @@ async def main() -> None:
             "Admin API starting on %s:%s.", settings.api_server_host, settings.api_server_port
         )
 
-    if not tasks:
-        logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")
-        while True:
-            await asyncio.sleep(3600)
-    else:
-        await asyncio.gather(*tasks)
+    try:
+        if not tasks:
+            logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")
+            while True:
+                await asyncio.sleep(3600)
+        else:
+            await asyncio.gather(*tasks)
+    finally:
+        await close_graph()
 
 
 if __name__ == "__main__":

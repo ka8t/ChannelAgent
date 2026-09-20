@@ -6,13 +6,14 @@ neither re-implements the DB queries itself.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db.models import (
     AccessRequest,
     ActionLog,
+    ActionStatus,
     Agent,
     Channel,
     ChannelIdentity,
@@ -24,15 +25,83 @@ from app.db.models import (
     _utcnow,
 )
 from app.db.session import sqlite_file_path
-from app.security.auth import grant_permission
+from app.security.auth import grant_permission, revoke_permission
+from app.security.hashing import channel_identifier_key
 
 DEFAULT_AGENT_NAME = "default"
+
+
+class NotFoundError(ValueError):
+    """Something an operation refers to does not exist. All service errors are
+    ValueErrors, so a front end can print any of them; the API maps
+    NotFoundError to 404, ConflictError to 409 and InvalidInputError to 422.
+    """
+
+
+class ConflictError(ValueError):
+    """The operation is valid but the current state forbids it."""
+
+
+class InvalidInputError(ValueError):
+    """An argument that cannot be used (empty name, too long...)."""
+
+
+class UserNotFoundError(NotFoundError):
+    """The user id refers to nobody."""
+
+
+class IdentityNotFoundError(NotFoundError):
+    pass
+
+
+class AgentNotFoundError(NotFoundError):
+    pass
+
+
+class RequestNotFoundError(NotFoundError):
+    pass
+
+
+class PermissionNotHeldError(NotFoundError):
+    pass
+
+
+class IdentityAlreadyLinkedError(ConflictError):
+    pass
+
+
+class AgentNameTakenError(ConflictError):
+    pass
+
+
+class RequestAlreadyResolvedError(ConflictError):
+    pass
+
+
+class UserHasHistoryError(ConflictError):
+    """Deleting was refused because the user has an audit trail (#50)."""
+
+    def __init__(self, user_id: int, agents: int, logs: int) -> None:
+        self.user_id, self.agents, self.logs = user_id, agents, logs
+        entries = "log entry" if logs == 1 else "log entries"
+        super().__init__(
+            f"User {user_id} has {agents} agent(s) and {logs} {entries}. "
+            "Deactivate the user instead, or purge to delete the history as well."
+        )
+
+
+async def _require_user(session: AsyncSession, user_id: int) -> User:
+    user = await session.get(User, user_id)
+    if user is None:
+        raise UserNotFoundError(f"No user with id {user_id}")
+    return user
 
 
 async def get_or_create_default_agent(session: AsyncSession, user_id: int) -> Agent:
     """A user's first Agent is created lazily, on first use — a
     single-agent user never has to think about agents at all (#37).
     """
+    await _require_user(session, user_id)
     stmt = select(Agent).where(Agent.user_id == user_id, Agent.name == DEFAULT_AGENT_NAME)
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing is not None:
@@ -43,7 +112,35 @@ async def get_or_create_default_agent(session: AsyncSession, user_id: int) -> Ag
     return agent
 
 
+MAX_AGENT_NAME_LENGTH = 100
+
+
+def _clean_agent_name(name: str) -> str:
+    name = name.strip()
+    if not name:
+        raise InvalidInputError("An agent name must not be empty")
+    if len(name) > MAX_AGENT_NAME_LENGTH:
+        raise InvalidInputError(f"An agent name is at most {MAX_AGENT_NAME_LENGTH} characters")
+    return name
+
+
+async def _agent_named(session: AsyncSession, user_id: int, name: str) -> Agent | None:
+    stmt = select(Agent).where(Agent.user_id == user_id, Agent.name == name)
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def get_agent(session: AsyncSession, agent_id: int) -> Agent:
+    agent = await session.get(Agent, agent_id)
+    if agent is None:
+        raise AgentNotFoundError(f"No agent with id {agent_id}")
+    return agent
+
+
 async def create_agent(session: AsyncSession, user_id: int, name: str) -> Agent:
+    await _require_user(session, user_id)
+    name = _clean_agent_name(name)
+    if await _agent_named(session, user_id, name) is not None:
+        raise AgentNameTakenError(f"User {user_id} already has an agent named {name!r}")
     agent = Agent(user_id=user_id, name=name)
     session.add(agent)
     await session.flush()
@@ -51,7 +148,8 @@ async def create_agent(session: AsyncSession, user_id: int, name: str) -> Agent:
 
 
 async def list_agents(session: AsyncSession, user_id: int) -> list[Agent]:
-    stmt = select(Agent).where(Agent.user_id == user_id)
+    await _require_user(session, user_id)
+    stmt = select(Agent).where(Agent.user_id == user_id).order_by(Agent.id)
     return list((await session.execute(stmt)).scalars().all())
 
 
@@ -59,18 +157,18 @@ async def rename_agent(session: AsyncSession, agent_id: int, new_name: str) -> A
     """Admin-editable (#37): callable against any user's Agent, not only
     the owning user's own — callers decide who's allowed to call this.
     """
-    agent = await session.get(Agent, agent_id)
-    if agent is None:
-        raise ValueError(f"No agent with id {agent_id}")
+    agent = await get_agent(session, agent_id)
+    new_name = _clean_agent_name(new_name)
+    clash = await _agent_named(session, agent.user_id, new_name)
+    if clash is not None and clash.id != agent.id:
+        raise AgentNameTakenError(f"User {agent.user_id} already has an agent named {new_name!r}")
     agent.name = new_name
     await session.flush()
     return agent
 
 
 async def set_agent_active(session: AsyncSession, agent_id: int, is_active: bool) -> Agent:
-    agent = await session.get(Agent, agent_id)
-    if agent is None:
-        raise ValueError(f"No agent with id {agent_id}")
+    agent = await get_agent(session, agent_id)
     agent.is_active = is_active
     await session.flush()
     return agent
@@ -84,9 +182,15 @@ async def record_action(
     channel: Channel,
     direction: Direction,
     text: str,
+    status: ActionStatus = ActionStatus.OK,
 ) -> ActionLog:
     entry = ActionLog(
-        user_id=user_id, agent_id=agent_id, channel=channel, direction=direction, text=text
+        user_id=user_id,
+        agent_id=agent_id,
+        channel=channel,
+        direction=direction,
+        text=text,
+        status=status,
     )
     session.add(entry)
     await session.flush()
@@ -113,42 +217,230 @@ async def request_access(
     return req
 
 
-async def list_pending_requests(session: AsyncSession) -> list[AccessRequest]:
-    stmt = select(AccessRequest).where(AccessRequest.status == RequestStatus.PENDING)
+async def list_requests(
+    session: AsyncSession, status: RequestStatus | None = RequestStatus.PENDING
+) -> list[AccessRequest]:
+    """Pending requests by default, oldest first. `status=None` lists all."""
+    stmt = select(AccessRequest).order_by(AccessRequest.id)
+    if status is not None:
+        stmt = stmt.where(AccessRequest.status == status)
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def approve_request(session: AsyncSession, request_id: int) -> User:
-    """Creates the User + ChannelIdentity + CHAT permission in one step —
-    an admin doesn't separately create the user then grant access.
-    """
-    request = await session.get(AccessRequest, request_id)
-    if request is None or request.status != RequestStatus.PENDING:
-        raise ValueError(f"No pending request with id {request_id}")
+async def list_pending_requests(session: AsyncSession) -> list[AccessRequest]:
+    return await list_requests(session, RequestStatus.PENDING)
 
-    user = User(display_name=f"Approved from {request.channel.value} request")
-    session.add(user)
-    await session.flush()
-    identity = ChannelIdentity(
-        user_id=user.id, channel=request.channel, external_id=request.external_id
+
+async def _pending_request(session: AsyncSession, request_id: int) -> AccessRequest:
+    request = await session.get(AccessRequest, request_id)
+    if request is None:
+        raise RequestNotFoundError(f"No request with id {request_id}")
+    if request.status != RequestStatus.PENDING:
+        raise RequestAlreadyResolvedError(
+            f"Request {request_id} is already {request.status.value}"
+        )
+    return request
+
+
+async def approve_request(
+    session: AsyncSession, request_id: int, *, resolved_by: str | None = None
+) -> User:
+    """Creates the User + ChannelIdentity + CHAT permission in one step —
+    an admin doesn't separately create the user then grant access. If the
+    identity already exists it is granted CHAT and its user is returned.
+    `resolved_by` records the actor ("api" or "console").
+    """
+    request = await _pending_request(session, request_id)
+
+    # The identity may already exist: an admin can add it by hand after the
+    # request was made (found on the real database). Approving then means
+    # "let it chat": no second identity, no second user.
+    stmt = select(ChannelIdentity).where(
+        ChannelIdentity.channel == request.channel,
+        ChannelIdentity.external_id == request.external_id,
     )
-    session.add(identity)
-    await session.flush()
+    identity = (await session.execute(stmt)).scalar_one_or_none()
+    if identity is not None:
+        user = await session.get(User, identity.user_id)
+    else:
+        user = User(display_name=f"Approved from {request.channel.value} request")
+        session.add(user)
+        await session.flush()
+        identity = ChannelIdentity(
+            user_id=user.id, channel=request.channel, external_id=request.external_id
+        )
+        session.add(identity)
+        await session.flush()
     await grant_permission(session, identity, PermissionKind.CHAT)
 
     request.status = RequestStatus.APPROVED
     request.resolved_at = _utcnow()
+    request.resolved_by = resolved_by
     await session.flush()
     return user
 
 
-async def deny_request(session: AsyncSession, request_id: int) -> None:
-    request = await session.get(AccessRequest, request_id)
-    if request is None or request.status != RequestStatus.PENDING:
-        raise ValueError(f"No pending request with id {request_id}")
+async def deny_request(
+    session: AsyncSession, request_id: int, *, resolved_by: str | None = None
+) -> None:
+    request = await _pending_request(session, request_id)
     request.status = RequestStatus.DENIED
     request.resolved_at = _utcnow()
+    request.resolved_by = resolved_by
     await session.flush()
+
+
+# --- Users, channel identities and permissions (#41, #35) ---
+# These used to live in the API routes, and the console ran its own queries.
+# One implementation here, called by both front ends.
+
+
+async def create_user(session: AsyncSession, display_name: str | None = None) -> User:
+    user = User(display_name=display_name)
+    session.add(user)
+    await session.flush()
+    return user
+
+
+async def list_users(session: AsyncSession) -> list[User]:
+    return list((await session.execute(select(User).order_by(User.id))).scalars().all())
+
+
+async def get_user(session: AsyncSession, user_id: int) -> User:
+    return await _require_user(session, user_id)
+
+
+async def update_user(
+    session: AsyncSession,
+    user_id: int,
+    *,
+    display_name: str | None = None,
+    is_active: bool | None = None,
+) -> User:
+    """Only the fields that are given change."""
+    user = await _require_user(session, user_id)
+    if display_name is not None:
+        user.display_name = display_name
+    if is_active is not None:
+        user.is_active = is_active
+    await session.flush()
+    return user
+
+
+async def _identity_of_user(
+    session: AsyncSession, user_id: int, identity_id: int
+) -> ChannelIdentity:
+    await _require_user(session, user_id)
+    identity = await session.get(ChannelIdentity, identity_id)
+    if identity is None or identity.user_id != user_id:
+        raise IdentityNotFoundError(f"No channel identity {identity_id} for user {user_id}")
+    return identity
+
+
+async def add_channel_identity(
+    session: AsyncSession, user_id: int, channel: Channel, identifier: str
+) -> ChannelIdentity:
+    """`identifier` is what an admin naturally has: a Telegram id, a Matrix
+    user id, or an email address. The stored lookup key is computed here,
+    with the same function the Auth Node uses, so the identity is
+    immediately visible to authorize(). An email address is also kept, encrypted.
+    """
+    await _require_user(session, user_id)
+    identifier = identifier.strip()
+    if not identifier:
+        raise InvalidInputError("An identifier must not be empty")
+    external_id = channel_identifier_key(channel, identifier)
+    stmt = select(ChannelIdentity).where(
+        ChannelIdentity.channel == channel, ChannelIdentity.external_id == external_id
+    )
+    if (await session.execute(stmt)).scalar_one_or_none() is not None:
+        raise IdentityAlreadyLinkedError("This channel identity is already linked to a user")
+    identity = ChannelIdentity(
+        user_id=user_id,
+        channel=channel,
+        external_id=external_id,
+        raw_address=identifier if channel is Channel.EMAIL else None,
+    )
+    session.add(identity)
+    await session.flush()
+    return identity
+
+
+async def list_channel_identities(session: AsyncSession, user_id: int) -> list[ChannelIdentity]:
+    await _require_user(session, user_id)
+    stmt = select(ChannelIdentity).where(ChannelIdentity.user_id == user_id).order_by(
+        ChannelIdentity.id
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def remove_channel_identity(
+    session: AsyncSession, user_id: int, identity_id: int
+) -> None:
+    identity = await _identity_of_user(session, user_id, identity_id)
+    await session.delete(identity)  # cascades to its permissions
+    await session.flush()
+
+
+async def list_identity_permissions(
+    session: AsyncSession, user_id: int, identity_id: int
+) -> list[Permission]:
+    await _identity_of_user(session, user_id, identity_id)
+    stmt = (
+        select(Permission)
+        .where(Permission.channel_identity_id == identity_id)
+        .order_by(Permission.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def grant_identity_permission(
+    session: AsyncSession, user_id: int, identity_id: int, kind: PermissionKind
+) -> Permission:
+    identity = await _identity_of_user(session, user_id, identity_id)
+    return await grant_permission(session, identity, kind)
+
+
+async def revoke_identity_permission(
+    session: AsyncSession, user_id: int, identity_id: int, kind: PermissionKind
+) -> None:
+    identity = await _identity_of_user(session, user_id, identity_id)
+    if not await revoke_permission(session, identity, kind):
+        raise PermissionNotHeldError(f"Permission {kind.value} was not held")
+
+
+@dataclass(frozen=True)
+class IdentityDetail:
+    id: int
+    channel: Channel
+    external_id: str
+    permissions: list[PermissionKind]
+
+
+@dataclass(frozen=True)
+class UserDetail:
+    user: User
+    identities: list[IdentityDetail]
+    agents: list[Agent]
+
+
+async def get_user_detail(session: AsyncSession, user_id: int) -> UserDetail:
+    """A user with their channel identities, the permission held on each, and
+    their agents: the "view detail" of #41.
+    """
+    user = await _require_user(session, user_id)
+    identities = []
+    for identity in await list_channel_identities(session, user_id):
+        perms = await list_identity_permissions(session, user_id, identity.id)
+        identities.append(
+            IdentityDetail(
+                id=identity.id,
+                channel=identity.channel,
+                external_id=identity.external_id,
+                permissions=[p.kind for p in perms],
+            )
+        )
+    return UserDetail(user=user, identities=identities, agents=await list_agents(session, user_id))
 
 
 LOG_SEARCH_MAX_LIMIT = 500
@@ -172,6 +464,7 @@ async def search_action_logs(
     agent_id: int | None = None,
     channel: Channel | None = None,
     direction: Direction | None = None,
+    status: ActionStatus | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     keyword: str | None = None,
@@ -208,6 +501,8 @@ async def search_action_logs(
         stmt = stmt.where(ActionLog.channel == channel)
     if direction is not None:
         stmt = stmt.where(ActionLog.direction == direction)
+    if status is not None:
+        stmt = stmt.where(ActionLog.status == status)
     if since is not None:
         stmt = stmt.where(ActionLog.created_at >= _as_utc(since))
     if until is not None:
@@ -278,4 +573,77 @@ async def storage_overview(session: AsyncSession) -> StorageOverview:
         row_counts=counts,
         oldest_log_at=_as_utc(oldest) if oldest is not None else None,
         newest_log_at=_as_utc(newest) if newest is not None else None,
+    )
+
+
+@dataclass(frozen=True)
+class DeletionReport:
+    user_id: int
+    agents_deleted: int
+    logs_deleted: int
+    threads_deleted: int = 0  # conversation threads whose checkpoints were purged
+
+
+async def _thread_ids_of_user(session: AsyncSession, user_id: int) -> list[str]:
+    """Every conversation thread the user can have: each of their channel
+    identities times each of their agents (the scheme of app.graph).
+    """
+    from app.graph import thread_id_from_key
+
+    identities = (
+        (await session.execute(select(ChannelIdentity).where(ChannelIdentity.user_id == user_id)))
+        .scalars()
+        .all()
+    )
+    agent_ids = (
+        (await session.execute(select(Agent.id).where(Agent.user_id == user_id))).scalars().all()
+    )
+    return [
+        thread_id_from_key(identity.channel, identity.external_id, agent_id)
+        for identity in identities
+        for agent_id in agent_ids
+    ]
+
+
+async def delete_user(
+    session: AsyncSession, user_id: int, *, purge: bool = False
+) -> DeletionReport:
+    """Delete a user (#50).
+
+    Policy: a user who has audit-trail entries is **not** deleted unless
+    `purge` is set, because the audit trail is the point of #38 and the
+    normal way to stop someone is to deactivate them. With no history the
+    user goes together with their agents, channel identities and
+    permissions. `purge=True` also deletes the agents, every log entry and
+    the conversation checkpoints (#49). The database side runs in the
+    caller's transaction: nothing persists unless the caller commits. The
+    checkpoint file is a separate database and cannot join that transaction,
+    so it is purged after the rows are deleted and before the commit.
+    """
+    user = await _require_user(session, user_id)
+    agents = (
+        await session.execute(
+            select(func.count()).select_from(Agent).where(Agent.user_id == user_id)
+        )
+    ).scalar_one()
+    logs = (
+        await session.execute(
+            select(func.count()).select_from(ActionLog).where(ActionLog.user_id == user_id)
+        )
+    ).scalar_one()
+    if logs and not purge:
+        raise UserHasHistoryError(user_id, agents, logs)
+
+    thread_ids = await _thread_ids_of_user(session, user_id) if purge else []
+    await session.execute(delete(ActionLog).where(ActionLog.user_id == user_id))
+    await session.execute(delete(Agent).where(Agent.user_id == user_id))
+    await session.delete(user)  # cascades to channel identities and permissions
+    await session.flush()
+    # The conversation checkpoints live in another file (#49): purged only
+    # once the database side went through, so a failure above loses nothing.
+    from app.graph import delete_threads
+
+    threads = await delete_threads(thread_ids)
+    return DeletionReport(
+        user_id=user_id, agents_deleted=agents, logs_deleted=logs, threads_deleted=threads
     )

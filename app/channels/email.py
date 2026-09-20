@@ -7,9 +7,12 @@ The mailbox is shared with ordinary mail (website contact form,
 customer questions), so the adapter only touches messages whose subject
 contains EMAIL_TRIGGER_TAG. Every other message is never fetched,
 flagged or answered: it stays unread for a human. Messages are read with
-BODY.PEEK, which sets no flag, and only tagged ones are then marked Seen
-and filed into EMAIL_AGENT_FOLDER, so they leave the INBOX humans read.
-Nothing is ever deleted or purged automatically.
+BODY.PEEK, which sets no flag. Once the turn has succeeded (or the sender
+is unknown, which is not retried) the message is marked Seen and filed into
+EMAIL_AGENT_FOLDER, so it leaves the INBOX humans read. If the turn fails
+it stays unread and is tried again on the next poll, up to MAX_ATTEMPTS,
+then it is filed into "<folder>.Failed" (#51). Nothing is ever deleted or
+purged automatically.
 
 IMAP/SMTP calls are synchronous (stdlib imaplib/smtplib) — wrapped in
 asyncio.to_thread so a slow mail server doesn't block the event loop
@@ -22,10 +25,11 @@ import email.utils
 import imaplib
 import logging
 import smtplib
+from dataclasses import dataclass
 from email.header import decode_header
 from email.mime.text import MIMEText
 
-from app.channels.dispatch import dispatch_event
+from app.channels.dispatch import DispatchOutcome, dispatch_event
 from app.channels.schema import NormalizedEvent
 from app.config import get_settings
 from app.db.models import Channel
@@ -116,21 +120,84 @@ def _move_message(imap: imaplib.IMAP4, uid: bytes, folder: str) -> bool:
     return False
 
 
-def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[tuple[str, str, str]]:
-    """Sync IMAP work: connect, find UNSEEN messages whose subject
-    carries the trigger tag, fetch only those (BODY.PEEK, so the fetch
-    itself sets no flag), mark only those Seen, move only those into
-    `folder` (when set), disconnect. Returns (from_address, subject,
-    body) tuples.
+@dataclass(frozen=True)
+class TaggedMessage:
+    uid: bytes
+    from_addr: str
+    subject: str
+    body: str
 
-    Everything is addressed by UID, not by message number: a move
-    renumbers the messages that follow it in the same session.
 
-    The server-side SEARCH narrows the set, and the subject is checked
-    again here because servers differ in how they match SUBJECT. A
-    message that fails that check is never marked Seen or moved. A
-    failed move is logged and never blocks the message from being handled:
-    it has already been read and marked Seen at that point.
+# A message whose turn fails is left unread in the INBOX and tried again on
+# the next poll, at most this many times, then filed into the "failed"
+# folder so a poison message cannot loop for ever (#51). Counted in memory:
+# a restart gives every message a fresh set of attempts.
+MAX_ATTEMPTS = 3
+_attempts: dict[bytes, int] = {}
+
+
+def failed_folder(folder: str) -> str:
+    """Where a message goes after MAX_ATTEMPTS failures. Empty when messages
+    are not being filed at all: it is then only marked Seen.
+    """
+    return f"{folder.strip()}.Failed" if folder.strip() else ""
+
+
+def _open_inbox() -> imaplib.IMAP4:
+    settings = get_settings()
+    imap = imaplib.IMAP4_SSL(settings.email_imap_host, settings.email_imap_port, timeout=10)
+    try:
+        imap.login(settings.email_username, settings.email_password)
+        imap.select("INBOX")
+    except Exception:
+        _logout(imap)
+        raise
+    return imap
+
+
+def _logout(imap: imaplib.IMAP4) -> None:
+    try:
+        imap.logout()
+    except Exception:
+        logger.debug("IMAP logout raised, ignoring", exc_info=True)
+
+
+def _mark_seen_and_file(imap: imaplib.IMAP4, uid: bytes, folder: str) -> None:
+    """Mark one message (by UID) Seen and, when `folder` is set, move it
+    there. A failed move is logged and leaves the message in the INBOX,
+    already flagged Seen.
+    """
+    imap.uid("STORE", uid, "+FLAGS", "\\Seen")
+    if not folder:
+        return
+    try:
+        if not _ensure_folder(imap, folder) or not _move_message(imap, uid, folder):
+            logger.warning(
+                "Could not move message %s to %r, it stays in INBOX", uid.decode(), folder
+            )
+    except imaplib.IMAP4.error:
+        logger.warning(
+            "IMAP error moving message %s to %r, it stays in INBOX",
+            uid.decode(), folder, exc_info=True,
+        )
+
+
+def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[TaggedMessage]:
+    """Sync IMAP work: connect, find UNSEEN messages whose subject carries
+    the trigger tag, read only those (BODY.PEEK, so reading sets no flag)
+    and disconnect. Returns the messages that have something to answer.
+
+    Nothing is flagged or moved here for those: that happens in
+    `_finalize_message`, once the turn has succeeded (#51), so a failed turn
+    leaves the message unread for another attempt. A tagged message with no
+    sender or an empty body has nothing to answer and would be fetched again
+    on every poll, so it is filed straight away.
+
+    Everything is addressed by UID, not by message number: a move renumbers
+    the messages that follow it in the same session. The server-side SEARCH
+    narrows the set, and the subject is checked again here because servers
+    differ in how they match SUBJECT: a message that fails that check is
+    never touched.
     """
     if not _tag_is_usable(tag):
         return []
@@ -138,13 +205,9 @@ def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[tuple[str, str, str
         logger.error("EMAIL_AGENT_FOLDER %r is not usable, handled mail stays in INBOX", folder)
         folder = ""
     folder = folder.strip()
-    settings = get_settings()
-    imap = imaplib.IMAP4_SSL(settings.email_imap_host, settings.email_imap_port, timeout=10)
-    results: list[tuple[str, str, str]] = []
-    folder_ready: bool | None = None
+    imap = _open_inbox()
+    results: list[TaggedMessage] = []
     try:
-        imap.login(settings.email_username, settings.email_password)
-        imap.select("INBOX")
         typ, data = imap.uid("SEARCH", "UNSEEN", "SUBJECT", f'"{tag}"')
         if typ == "OK":
             for uid in data[0].split():
@@ -158,28 +221,23 @@ def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[tuple[str, str, str
                 from_addr = email.utils.parseaddr(msg.get("From", ""))[1]
                 body = _extract_body(msg).strip()
                 if from_addr and body:
-                    results.append((from_addr, subject, body))
-                imap.uid("STORE", uid, "+FLAGS", "\\Seen")
-                if folder:
-                    try:
-                        if folder_ready is None:
-                            folder_ready = _ensure_folder(imap, folder)
-                        if not folder_ready or not _move_message(imap, uid, folder):
-                            logger.warning(
-                                "Could not move message %s to %r, it stays in INBOX",
-                                uid.decode(), folder,
-                            )
-                    except imaplib.IMAP4.error:
-                        logger.warning(
-                            "IMAP error moving message %s to %r, it stays in INBOX",
-                            uid.decode(), folder, exc_info=True,
-                        )
+                    results.append(TaggedMessage(uid, from_addr, subject, body))
+                else:
+                    _mark_seen_and_file(imap, uid, folder)
     finally:
-        try:
-            imap.logout()
-        except Exception:
-            logger.debug("IMAP logout raised, ignoring", exc_info=True)
+        _logout(imap)
     return results
+
+
+def _finalize_message(uid: bytes, folder: str) -> None:
+    """Sync IMAP work: mark one handled message Seen and file it (#51)."""
+    if not _folder_is_usable(folder):
+        folder = ""
+    imap = _open_inbox()
+    try:
+        _mark_seen_and_file(imap, uid, folder.strip())
+    finally:
+        _logout(imap)
 
 
 def _send_reply_sync(to_address: str, subject: str, body: str) -> None:
@@ -195,18 +253,48 @@ def _send_reply_sync(to_address: str, subject: str, body: str) -> None:
 
 async def _poll_once() -> None:
     settings = get_settings()
-    messages = await asyncio.to_thread(
-        _fetch_tagged_unseen, settings.email_trigger_tag, settings.email_agent_folder
-    )
-    for from_addr, subject, body in messages:
-        logger.info("Email received from %s: %s", from_addr, subject)
+    folder = settings.email_agent_folder
+    messages = await asyncio.to_thread(_fetch_tagged_unseen, settings.email_trigger_tag, folder)
+    for message in messages:
+        logger.info("Email received from %s: %s", message.from_addr, message.subject)
 
-        async def reply(text: str, _to: str = from_addr, _subj: str = subject) -> None:
-            await asyncio.to_thread(_send_reply_sync, _to, f"Re: {_subj}", text)
+        async def reply(text: str, _msg: TaggedMessage = message) -> None:
+            await asyncio.to_thread(
+                _send_reply_sync, _msg.from_addr, f"Re: {_msg.subject}", text
+            )
 
-        event = NormalizedEvent(user_id=from_addr, channel=Channel.EMAIL, text=body, reply=reply)
-        async with session_scope() as session:
-            await dispatch_event(session, event)
+        event = NormalizedEvent(
+            user_id=message.from_addr, channel=Channel.EMAIL, text=message.body, reply=reply
+        )
+        attempts = _attempts.get(message.uid, 0)
+        try:
+            async with session_scope() as session:
+                outcome = await dispatch_event(session, event, apologize=False, retry=attempts > 0)
+        except Exception:
+            logger.exception("Handling the email from %s failed", message.from_addr)
+            outcome = DispatchOutcome.FAILED
+
+        if outcome is DispatchOutcome.FAILED:
+            attempts += 1
+            _attempts[message.uid] = attempts
+            if attempts < MAX_ATTEMPTS:
+                logger.warning(
+                    "Email from %s: attempt %s of %s failed, left unread in INBOX for a retry",
+                    message.from_addr, attempts, MAX_ATTEMPTS,
+                )
+                continue
+            logger.error(
+                "Email from %s: giving up after %s attempts, filing it as failed",
+                message.from_addr, MAX_ATTEMPTS,
+            )
+            target = failed_folder(folder)
+        else:
+            target = folder
+        _attempts.pop(message.uid, None)
+        try:
+            await asyncio.to_thread(_finalize_message, message.uid, target)
+        except Exception:
+            logger.exception("Could not mark the email from %s as handled", message.from_addr)
 
 
 async def run_email_adapter() -> None:

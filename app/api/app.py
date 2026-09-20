@@ -12,11 +12,12 @@ Disabled here (docs_url=None etc.) and re-implemented below as normal
 routes, which the app-level dependency does cover.
 """
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
+from app.admin import service
 from app.api.deps import verify_api_key
 from app.api.routes import router
 
@@ -28,6 +29,19 @@ app = FastAPI(
     openapi_url=None,
 )
 app.include_router(router)
+
+
+def _error(status_code: int):
+    async def handler(_request: Request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=status_code, content={"detail": str(exc)})
+
+    return handler
+
+
+# One place turns the service layer's errors into HTTP statuses (#41).
+app.add_exception_handler(service.NotFoundError, _error(404))
+app.add_exception_handler(service.ConflictError, _error(409))
+app.add_exception_handler(service.InvalidInputError, _error(422))
 
 
 @app.get("/openapi.json")

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 
+from sqlalchemy import event
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -46,11 +47,30 @@ def _ensure_sqlite_dir_exists(database_url: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:
+    """SQLite ignores foreign keys unless every connection asks for them
+    (#50): without this an agent could be created for a user that does not
+    exist, and deleting a user left orphan rows behind. Applied to the
+    application's engine only. Alembic's own engine (alembic/env.py) keeps
+    the default, because SQLite's copy-and-move table rebuild in a batch
+    migration is not meant to run with enforcement on.
+    """
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_connection, _connection_record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+
 @lru_cache
 def get_engine() -> AsyncEngine:
     database_url = get_settings().database_url
     _ensure_sqlite_dir_exists(database_url)
-    return create_async_engine(database_url)
+    engine = create_async_engine(database_url)
+    if make_url(database_url).drivername.startswith("sqlite"):
+        _enable_sqlite_foreign_keys(engine)
+    return engine
 
 
 @lru_cache

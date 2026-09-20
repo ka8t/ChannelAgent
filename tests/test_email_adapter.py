@@ -13,7 +13,13 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 
 from app.channels import email as email_adapter
-from app.channels.email import _decode, _extract_body, _fetch_tagged_unseen
+from app.channels.email import (
+    TaggedMessage,
+    _decode,
+    _extract_body,
+    _fetch_tagged_unseen,
+    _finalize_message,
+)
 
 
 def test_decode_plain_ascii_subject():
@@ -257,17 +263,20 @@ def test_untagged_messages_are_never_fetched_flagged_or_moved(fake_imap):
     assert fake.moves == [] and fake.creates == [] and fake.lists == 0
 
 
-def test_tagged_message_is_read_with_peek_flagged_seen_and_filed(fake_imap):
+def test_reading_a_tagged_message_flags_and_moves_nothing(fake_imap):
+    """#51: the message is only read here. It is flagged and filed by
+    _finalize_message once the turn has succeeded, so a failed turn leaves
+    it unread for another attempt.
+    """
     fake = fake_imap({b"11": _raw(*CUSTOMER), b"12": _raw(*TAGGED)})
     result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert result == [("sender@example.com", "Re: [Agent] hello", "for the bot")]
+    assert result == [
+        TaggedMessage(b"12", "sender@example.com", "Re: [Agent] hello", "for the bot")
+    ]
     assert [u for u, _ in fake.fetches] == [b"12"]
     assert all("PEEK" in spec for _, spec in fake.fetches)
-    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
-    assert fake.moves == [(b"12", "INBOX.Agent")]
-    assert fake.creates == ["INBOX.Agent"] and fake.subscribes == ["INBOX.Agent"]
-    assert list(fake.messages) == [b"11"], "the customer mail must still be in the INBOX"
-    assert fake.plain_expunges == 0
+    assert fake.stores == [] and fake.moves == [] and fake.creates == []
+    assert set(fake.messages) == {b"11", b"12"}, "both messages are still in the INBOX"
 
 
 def test_client_side_check_protects_when_server_ignores_subject_search(fake_imap):
@@ -276,77 +285,21 @@ def test_client_side_check_protects_when_server_ignores_subject_search(fake_imap
         search_ignores_subject=True,
     )
     result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert [r[0] for r in result] == ["s@example.com"]
+    assert [m.from_addr for m in result] == ["s@example.com"]
     assert all("PEEK" in spec for _, spec in fake.fetches)
+    assert fake.stores == [] and fake.moves == []
+
+
+@pytest.mark.parametrize(
+    ("sender", "body"),
+    [("", "no sender"), ("sender@example.com", ""), ("sender@example.com", "   \n ")],
+)
+def test_tagged_message_with_nothing_to_answer_is_filed_straight_away(fake_imap, sender, body):
+    raw = _raw(sender, "[agent] hello", body) if sender else _raw("", "[agent] hello", body)
+    fake = fake_imap({b"12": raw})
+    assert _fetch_tagged_unseen("[agent]", "INBOX.Agent") == []
     assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
     assert fake.moves == [(b"12", "INBOX.Agent")]
-    assert b"11" in fake.messages
-
-
-def test_two_tagged_messages_are_both_handled_and_folder_is_created_once(fake_imap):
-    fake = fake_imap({
-        b"21": _raw("a@example.com", "[agent] first", "one"),
-        b"22": _raw("b@example.com", "[agent] second", "two"),
-    })
-    result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert [r[0] for r in result] == ["a@example.com", "b@example.com"]
-    assert fake.moves == [(b"21", "INBOX.Agent"), (b"22", "INBOX.Agent")]
-    assert fake.creates == ["INBOX.Agent"]
-
-
-def test_existing_folder_is_not_recreated(fake_imap):
-    fake = fake_imap({b"12": _raw(*TAGGED)}, folders={"INBOX", "INBOX.Agent"})
-    _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert fake.creates == []
-    assert fake.moves == [(b"12", "INBOX.Agent")]
-
-
-def test_without_move_falls_back_to_copy_flag_and_uid_expunge_of_that_uid_only(fake_imap):
-    fake = fake_imap(
-        {b"11": _raw(*CUSTOMER), b"12": _raw(*TAGGED)},
-        capabilities=("IMAP4REV1", "UIDPLUS"),
-    )
-    _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert fake.moves == []
-    assert fake.copies == [(b"12", "INBOX.Agent")]
-    assert (b"12", "+FLAGS", "\\Deleted") in fake.stores
-    assert fake.uid_expunges == [b"12"]
-    assert fake.plain_expunges == 0
-    assert b"11" in fake.messages
-
-
-def test_without_move_or_uidplus_nothing_is_moved_or_expunged(fake_imap):
-    fake = fake_imap({b"12": _raw(*TAGGED)}, capabilities=("IMAP4REV1",))
-    result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert len(result) == 1, "the message must still be handled"
-    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
-    assert fake.moves == [] and fake.copies == []
-    assert fake.uid_expunges == [] and fake.plain_expunges == 0
-
-
-def test_folder_creation_failure_still_handles_the_message(fake_imap):
-    fake = fake_imap({b"12": _raw(*TAGGED)}, create_fails=True)
-    result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert len(result) == 1
-    assert fake.moves == [] and fake.copies == []
-    assert b"12" in fake.messages, "it stays in the INBOX when it cannot be filed"
-
-
-@pytest.mark.parametrize("folder", ["", "   "])
-def test_empty_folder_setting_leaves_messages_in_the_inbox(fake_imap, folder):
-    fake = fake_imap({b"12": _raw(*TAGGED)})
-    result = _fetch_tagged_unseen("[agent]", folder)
-    assert len(result) == 1
-    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
-    assert fake.lists == 0 and fake.creates == [] and fake.moves == []
-
-
-@pytest.mark.parametrize("folder", ['a"b', "a\\b", "In*box", "Bo%x", "dossié"])
-def test_unusable_folder_name_moves_nothing_but_still_handles_the_message(fake_imap, folder):
-    fake = fake_imap({b"12": _raw(*TAGGED)})
-    result = _fetch_tagged_unseen("[agent]", folder)
-    assert len(result) == 1
-    assert fake.lists == 0 and fake.creates == [] and fake.moves == [] and fake.copies == []
 
 
 @pytest.mark.parametrize("tag", ["", "   ", 'a"b', "a\\b", "é-tag"])
@@ -355,6 +308,226 @@ def test_unusable_tag_processes_nothing_and_never_connects(fake_imap, tag):
     assert _fetch_tagged_unseen(tag, "INBOX.Agent") == []
     assert fake_imap.holder["connections"] == 0
     assert fake.fetches == [] and fake.stores == [] and fake.moves == []
+
+
+# --- _finalize_message: mark Seen and file, after a successful turn ---
+
+
+def test_finalize_marks_seen_and_moves_only_that_uid(fake_imap):
+    fake = fake_imap({b"11": _raw(*CUSTOMER), b"12": _raw(*TAGGED)})
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
+    assert fake.moves == [(b"12", "INBOX.Agent")]
+    assert fake.creates == ["INBOX.Agent"] and fake.subscribes == ["INBOX.Agent"]
+    assert list(fake.messages) == [b"11"], "the customer mail must still be in the INBOX"
+    assert fake.plain_expunges == 0
+
+
+def test_finalize_does_not_recreate_an_existing_folder(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)}, folders={"INBOX", "INBOX.Agent"})
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.creates == []
+    assert fake.moves == [(b"12", "INBOX.Agent")]
+
+
+def test_finalize_without_move_falls_back_to_copy_flag_and_uid_expunge(fake_imap):
+    fake = fake_imap(
+        {b"11": _raw(*CUSTOMER), b"12": _raw(*TAGGED)},
+        capabilities=("IMAP4REV1", "UIDPLUS"),
+    )
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.moves == []
+    assert fake.copies == [(b"12", "INBOX.Agent")]
+    assert (b"12", "+FLAGS", "\\Deleted") in fake.stores
+    assert fake.uid_expunges == [b"12"]
+    assert fake.plain_expunges == 0
+    assert b"11" in fake.messages
+
+
+def test_finalize_without_move_or_uidplus_only_marks_seen(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)}, capabilities=("IMAP4REV1",))
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
+    assert fake.moves == [] and fake.copies == []
+    assert fake.uid_expunges == [] and fake.plain_expunges == 0
+
+
+def test_finalize_folder_creation_failure_leaves_it_seen_in_the_inbox(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)}, create_fails=True)
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
+    assert fake.moves == [] and fake.copies == []
+    assert b"12" in fake.messages
+
+
+@pytest.mark.parametrize("folder", ["", "   ", 'a"b', "a\\b", "In*box", "Bo%x", "dossié"])
+def test_finalize_with_no_or_unusable_folder_only_marks_seen(fake_imap, folder):
+    fake = fake_imap({b"12": _raw(*TAGGED)})
+    _finalize_message(b"12", folder)
+    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
+    assert fake.lists == 0 and fake.creates == [] and fake.moves == [] and fake.copies == []
+
+
+def test_finalize_imap_error_while_moving_does_not_raise(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)})
+    original = fake.uid
+
+    def uid(command, *args):
+        if command.upper() == "MOVE":
+            raise email_adapter.imaplib.IMAP4.error("boom")
+        return original(command, *args)
+
+    fake.uid = uid
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
+    assert b"12" in fake.messages
+
+
+def test_failed_folder_name():
+    assert email_adapter.failed_folder("INBOX.Agent") == "INBOX.Agent.Failed"
+    assert email_adapter.failed_folder("  INBOX.Agent ") == "INBOX.Agent.Failed"
+    assert email_adapter.failed_folder("") == ""
+    assert email_adapter.failed_folder("   ") == ""
+
+
+# --- _poll_once: retries after a failed turn (#51) ---
+
+
+class _PollHarness:
+    """Drives _poll_once with scripted dispatch outcomes and records what it
+    calls, without a mailbox or a database.
+    """
+
+    def __init__(self, monkeypatch, folder="INBOX.Agent"):
+        from contextlib import asynccontextmanager
+
+        self.outcomes: list = []
+        self.dispatch_calls: list[dict] = []
+        self.finalized: list[tuple[bytes, str]] = []
+        self.messages: list[TaggedMessage] = []
+        email_adapter._attempts.clear()
+
+        @asynccontextmanager
+        async def fake_session_scope():
+            yield object()
+
+        async def fake_dispatch(session, event, *, apologize=True, retry=False):
+            self.dispatch_calls.append(
+                {"user": event.user_id, "apologize": apologize, "retry": retry}
+            )
+            outcome = self.outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        monkeypatch.setattr(email_adapter, "session_scope", fake_session_scope)
+        monkeypatch.setattr(email_adapter, "dispatch_event", fake_dispatch)
+        monkeypatch.setattr(
+            email_adapter, "_fetch_tagged_unseen", lambda tag, folder="": list(self.messages)
+        )
+        monkeypatch.setattr(
+            email_adapter, "_finalize_message", lambda uid, f: self.finalized.append((uid, f))
+        )
+        monkeypatch.setattr(
+            email_adapter,
+            "get_settings",
+            lambda: type("S", (), {"email_trigger_tag": "[agent]", "email_agent_folder": folder})(),
+        )
+
+
+def _msg(uid=b"7", sender="sender@example.com"):
+    return TaggedMessage(uid, sender, "[agent] hi", "question")
+
+
+@pytest.mark.parametrize("outcome", ["ok", "denied"])
+async def test_poll_files_the_message_after_a_handled_turn(monkeypatch, outcome):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome(outcome)]
+    await email_adapter._poll_once()
+    assert h.finalized == [(b"7", "INBOX.Agent")]
+    assert h.dispatch_calls == [{"user": "sender@example.com", "apologize": False, "retry": False}]
+    assert email_adapter._attempts == {}
+
+
+async def test_poll_leaves_a_failed_message_unread_for_a_retry(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome.FAILED]
+    await email_adapter._poll_once()
+    assert h.finalized == [], "a failed turn must not mark or move the message"
+    assert email_adapter._attempts == {b"7": 1}
+
+
+async def test_poll_retries_then_files_the_message_after_a_success(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome.FAILED, DispatchOutcome.OK]
+    await email_adapter._poll_once()
+    await email_adapter._poll_once()
+    assert h.finalized == [(b"7", "INBOX.Agent")]
+    assert [c["retry"] for c in h.dispatch_calls] == [False, True], "the inbound is logged once"
+    assert email_adapter._attempts == {}
+
+
+async def test_poll_gives_up_after_three_failures_and_files_it_as_failed(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome.FAILED] * 3
+    for _ in range(3):
+        await email_adapter._poll_once()
+    assert email_adapter.MAX_ATTEMPTS == 3
+    assert h.finalized == [(b"7", "INBOX.Agent.Failed")]
+    assert [c["retry"] for c in h.dispatch_calls] == [False, True, True]
+    assert all(c["apologize"] is False for c in h.dispatch_calls), "no apology email"
+    assert email_adapter._attempts == {}
+
+
+async def test_poll_after_three_failures_without_a_folder_only_marks_seen(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch, folder="")
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome.FAILED] * 3
+    for _ in range(3):
+        await email_adapter._poll_once()
+    assert h.finalized == [(b"7", "")]
+
+
+async def test_poll_an_exception_in_one_message_does_not_lose_the_others(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg(b"7", "a@example.com"), _msg(b"8", "b@example.com")]
+    h.outcomes = [RuntimeError("database is locked"), DispatchOutcome.OK]
+    await email_adapter._poll_once()
+    assert h.finalized == [(b"8", "INBOX.Agent")]
+    assert email_adapter._attempts == {b"7": 1}, "the first one will be retried"
+
+
+async def test_poll_keeps_going_when_finalizing_fails(monkeypatch):
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg(b"7", "a@example.com"), _msg(b"8", "b@example.com")]
+    h.outcomes = [DispatchOutcome.OK, DispatchOutcome.OK]
+
+    def flaky(uid, folder):
+        if uid == b"7":
+            raise OSError("connection reset")
+        h.finalized.append((uid, folder))
+
+    monkeypatch.setattr(email_adapter, "_finalize_message", flaky)
+    await email_adapter._poll_once()
+    assert h.finalized == [(b"8", "INBOX.Agent")]
 
 
 def test_default_trigger_tag_and_folder(monkeypatch):
@@ -408,19 +581,3 @@ async def test_unknown_telegram_sender_still_gets_the_denial_reply(fresh_db):
     async with session_scope() as session:
         await dispatch_event(session, NormalizedEvent("424242", Channel.TELEGRAM, "hi", reply))
     assert sent == [DENIED_MESSAGE]
-
-
-def test_imap_error_while_moving_does_not_lose_the_message(fake_imap):
-    fake = fake_imap({b"12": _raw(*TAGGED)})
-    original = fake.uid
-
-    def uid(command, *args):
-        if command.upper() == "MOVE":
-            raise email_adapter.imaplib.IMAP4.error("boom")
-        return original(command, *args)
-
-    fake.uid = uid
-    result = _fetch_tagged_unseen("[agent]", "INBOX.Agent")
-    assert len(result) == 1
-    assert fake.stores == [(b"12", "+FLAGS", "\\Seen")]
-    assert b"12" in fake.messages

@@ -41,7 +41,7 @@ graph TD
     %% Core Agent Processing Layer
     subgraph LangGraphEngine [LangGraph Orchestrator]
         LG[State Graph Workflow]
-        MEM[(MemorySaver / Checkpointer<br/>Isolated by thread_id)]
+        MEM[(Encrypted SQLite Checkpointer<br/>Isolated by thread_id)]
     end
 
     %% Compute Infrastructure Layer per Platform
@@ -112,8 +112,8 @@ it.
 | Incoming message | What the adapter does |
 |---|---|
 | No tag in the subject | Nothing. Not fetched, not flagged, not answered. It stays unread for a human. |
-| Tag, sender authorized | Read, marked Seen, filed into `EMAIL_AGENT_FOLDER`, routed to the agent, reply sent. |
-| Tag, sender unknown | Read, marked Seen, filed into `EMAIL_AGENT_FOLDER`, an `AccessRequest` is created for the admin. No reply is sent. |
+| Tag, sender authorized | Read without flagging it, routed to the agent, reply sent, **then** marked Seen and filed into `EMAIL_AGENT_FOLDER`. If the turn fails it stays unread and is tried again on the next poll, up to 3 attempts, then it is marked Seen and filed into `<EMAIL_AGENT_FOLDER>.Failed`. No apology email is ever sent. |
+| Tag, sender unknown | An `AccessRequest` is created for the admin, no reply is sent, then it is marked Seen and filed into `EMAIL_AGENT_FOLDER`. Not retried. |
 
 How the guarantees are enforced (`app/channels/email.py`):
 
@@ -121,9 +121,17 @@ How the guarantees are enforced (`app/channels/email.py`):
   the subject is checked again in the adapter because IMAP servers
   differ in how they match `SUBJECT`.
 - Messages are fetched with `BODY.PEEK[]`, which sets no flag. Only a
-  tagged message is then marked `\Seen`. A plain `RFC822` fetch marks the
-  message as read on most servers, which is what hid customer mail from
-  humans before this rule existed.
+  tagged message that has been **handled** is marked `\Seen` and filed
+  (#51): a failed turn leaves it unread for another attempt. A plain
+  `RFC822` fetch marks the message as read on most servers, which is what
+  hid customer mail from humans before this rule existed.
+- Retries (#51): a failed turn is counted per message in memory, so a
+  restart gives a message a fresh set of 3 attempts. The inbound entry is
+  written once, not once per attempt. A message that fails 3 times is
+  marked Seen and filed into `<EMAIL_AGENT_FOLDER>.Failed` (only marked
+  Seen when `EMAIL_AGENT_FOLDER` is empty), and each failure has an audit
+  entry with status `failed`. One message that raises does not stop the
+  others in the same poll.
 - An empty tag, or one with non-ASCII characters, quotes or backslashes,
   is refused: the adapter does not start. An empty tag never means
   "process everything".
@@ -199,6 +207,45 @@ encryption key is loaded at runtime from `.env` (`ENCRYPTION_KEY`) and
 is never stored in the database and never committed to Git. See
 `app/security/encryption.py`.
 
+### Admin API and console over one service layer
+
+Every administrative operation exists once, in `app/admin/service.py`. The
+Admin API routes (`app/api/routes.py`) and the console
+(`./start.sh --admin`, `app/admin/cli.py`) only call it: neither holds a
+query of its own (#35, #41). Service errors are typed and each front end
+maps them: `NotFoundError` is HTTP 404, `ConflictError` 409,
+`InvalidInputError` 422 (handlers in `app/api/app.py`); the console prints
+the message and returns to its menu.
+
+| Area | Admin API | Console menu |
+|---|---|---|
+| Users | `POST/GET /users`, `GET/PATCH/DELETE /users/{id}` (`?purge=true`) | 2: detail, create, activate, deactivate, delete |
+| Channel identities | `POST/GET /users/{id}/channels`, `DELETE .../channels/{id}` | 2: add-identity, remove-identity |
+| Permissions | `POST/GET/DELETE .../channels/{id}/permissions[/{kind}]` | 2: grant, revoke |
+| Access requests (#36) | `GET /requests?status=pending\|approved\|denied\|all`, `POST /requests/{id}/approve`, `POST /requests/{id}/deny` | 1 |
+| Agents (#37) | `GET/POST /users/{id}/agents`, `GET/PATCH /agents/{id}` (rename, activate, deactivate, any user's) | 3 |
+| Audit trail | `GET /logs` | 4 |
+| Storage | `GET /storage` | 5 |
+
+- **Access requests.** Approving creates the user, the channel identity and
+  the `chat` permission in one step. If the identity already exists (an admin
+  added it by hand after the request), it is granted `chat` and no second
+  user is created. Resolving records who did it in `resolved_by`: `api` or
+  `console` (there is one shared key and no admin identity). A request that is
+  already resolved answers 409, an unknown one 404.
+- **Agents.** Names are unique per user (409), 1 to 100 characters (422). A
+  **deactivated agent does not answer**: the user gets a fixed notice, the
+  message is recorded with status `denied` and the LLM is not called. Which
+  agent a message reaches is not selectable yet
+  ([#54](https://github.com/ka8t/ChannelAgent/issues/54)).
+- **Console.** Every menu is wrapped: a mistyped answer, an unknown id or a
+  refused operation prints a message and returns to the menu; an unexpected
+  error is logged and reported; closing the input ends the session cleanly.
+  Deleting a user asks for the word `PURGE` to also delete their history.
+- **Parity.** A test runs the same operation through the API on one database
+  and through the console on an identical one, and compares the rows and the
+  service functions called (13 operations).
+
 ### Admin API exposure
 
 The Admin API serves user, permission and agent data and, since #39, the
@@ -239,7 +286,7 @@ ends: `GET /logs` on the Admin API and menu 4 of the console
 
 | Filter | Meaning |
 |---|---|
-| `user_id`, `agent_id`, `channel`, `direction` | Exact match. |
+| `user_id`, `agent_id`, `channel`, `direction`, `status` | Exact match. `status` is `ok`, `failed` or `denied`. |
 | `since` / `until` | Half-open window: `since` inclusive, `until` exclusive. A naive datetime is UTC, an aware one is converted to UTC. The console reads dates as `YYYY-MM-DD` (UTC) and treats a "to" date as that whole day. |
 | `keyword` | Case-insensitive substring of the **decrypted** text. |
 | `limit`, `offset` | 1 to 500 results (default 100 on the API, 20 in the console); `offset` skips that many *matching* rows. |
@@ -258,6 +305,31 @@ purpose: narrow with user, agent, channel or dates first on a large log.
 `GET /logs` returns the decrypted text, so it is only served behind the
 `API_SERVER_KEY` bearer check like every other route.
 
+### Failed turns
+
+`app.channels.dispatch.dispatch_event` never lets a failure escape (#51)
+and returns a `DispatchOutcome` (`ok`, `denied` or `failed`) so the
+adapter can decide about retrying.
+
+1. The inbound message is committed to the audit trail **before** the LLM
+   is called, so a failed turn cannot lose it.
+2. If the LLM call raises (gateway down, timeout), the error is logged
+   with its traceback, the user gets one fixed apology (`Sorry, I cannot
+   answer right now...`, never an error text), and an outbound entry with
+   status `failed` is recorded. With `apologize=False` (email retries
+   silently) nothing is sent and the entry says so.
+3. If delivering the answer fails, the generated answer is kept in an
+   outbound entry with status `failed`, so it is not lost.
+4. A known identity without permission is recorded as an inbound entry
+   with status `denied`; an unknown identity has no user to attach a log
+   to and only gets an `AccessRequest`.
+
+`status` is a column of `action_logs` (Alembic migration `bcf3aa387f5e`,
+existing rows are `ok`) and can be filtered in `GET /logs` and in the
+console. Known limit: when the answer was generated but the reply could
+not be delivered, an email retry runs the turn again and the
+conversation history gains a duplicate turn.
+
 ### Storage overview
 
 `GET /storage` on the Admin API and menu 5 of the console (#40) call one
@@ -268,6 +340,29 @@ is not a SQLite file), the exact `COUNT(*)` of every table (`users`,
 `action_logs`) and the oldest and newest audit-trail timestamps in UTC
 (none while the log is empty). The API leaves the file path out on
 purpose. This is visibility, not a storage engine or a backup tool.
+
+### Referential integrity and deleting users
+
+SQLite ignores foreign keys unless every connection asks for them, so the
+application's engine sets `PRAGMA foreign_keys=ON` on each connection
+(#50). Alembic's own engine does not: SQLite's copy-and-move rebuild used
+by batch migrations is not meant to run with enforcement on. The service
+layer also checks that a user exists before creating an agent for them,
+so the caller gets a clear `UserNotFoundError` instead of a database
+error.
+
+**Deleting a user** (`app.admin.service.delete_user`, `DELETE
+/users/{id}`):
+
+| The user has | Default | With `purge` (`?purge=true`) |
+|---|---|---|
+| No audit-trail entries | Deleted with their agents, channel identities and permissions | Same |
+| Audit-trail entries | **Refused** (`409` with the counts): deactivate the user instead | Agents, log entries, identities and permissions are all deleted in one transaction |
+
+The audit trail is the point of the action log, and the normal way to
+stop someone is to deactivate them, so deleting is the exception. The
+purge exists for a privacy request. Nothing persists unless the caller
+commits.
 
 ### Database and migrations
 
@@ -283,16 +378,36 @@ a schema change never requires dropping the database. See `README.md`'s
 
 ### LangGraph orchestrator
 
-A single `StateGraph` workflow (`app/graph.py`, to be implemented)
-handles agent reasoning and tool use for every channel. Per-user,
-per-conversation isolation is achieved through LangGraph's native
-checkpointer mechanism, keyed by a `thread_id` derived from the channel
-and user identity, e.g.:
+A single `StateGraph` workflow (`app/graph.py`) handles agent reasoning
+for every channel. Per-user, per-conversation isolation is achieved
+through LangGraph's native checkpointer, keyed by a `thread_id` built from
+the channel, the identity key and the agent:
 
-- `telegram_{user_id}`
-- `email_{email_hash}` (hash, not the raw address, used as the thread
-  key — the raw address itself is only ever handled encrypted at rest)
-- `matrix_{user_id}`
+- `telegram_{user_id}_{agent_id}`
+- `email_{email_hash}_{agent_id}` (hash, not the raw address, used as the
+  thread key: the raw address itself is only ever handled encrypted at rest)
+- `matrix_{user_id}_{agent_id}`
+
+**Conversations survive a restart** (#49). The checkpoints live in a
+SQLite file of their own, `checkpoints.db` next to the main database
+(`CHECKPOINT_DB_PATH` to move it), so it is in the volume Docker keeps.
+Alembic keeps owning only the application's tables; the checkpointer
+creates its own. The payloads are **encrypted with `ENCRYPTION_KEY`**
+(Fernet, through LangGraph's `EncryptedSerializer`), like `ActionLog.text`,
+because a checkpoint is the whole conversation. Only the thread id and
+the checkpoint ids stay readable.
+
+- The file is in WAL mode: while the application runs, recent writes are
+  in `checkpoints.db-wal`. A backup must copy `checkpoints.db`,
+  `checkpoints.db-wal` and `checkpoints.db-shm` together, or use SQLite's
+  backup command.
+- With a different or lost `ENCRYPTION_KEY`, the next turn on an existing
+  thread raises (the turn is recorded as failed, see "Failed turns"), and
+  the other threads are not affected.
+- Purging a user (`DELETE /users/{id}?purge=true`) deletes their
+  conversation threads too.
+- The history is not trimmed yet: a very long thread will eventually
+  exceed the model's context window ([#47](https://github.com/ka8t/ChannelAgent/issues/47)).
 
 ### Compute topology
 
