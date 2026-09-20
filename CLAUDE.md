@@ -9,7 +9,7 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **36 closed, 9 open** counting #42-#45 (`gh issue list --repo
+  miscount): **38 closed, 7 open** counting #42 and #45 (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
 - `pytest`: **48 passed, 0 failed** (24 at pause, +24 for the shared
   mailbox rules below). `ruff check .`: 0 issues.
@@ -34,11 +34,10 @@ State at pause, verified facts, not narrative:
    `Hermes` repo actually resolves for outside readers.
 7. **#42** Dedicated bot mailbox instead of the shared `contact@` one —
    P3, planned evolution of the subject-tag rule below.
-8. **#43** Subject-tag rule (bug fix of #28) and **#44** filing handled
-   mail into `INBOX.Agent`: implemented in the working tree, **not
-   committed yet**, so both stay open until the commit lands (close with
-   the hash and re-run figures). **#45** `init_db()` silences the app
-   loggers (alembic `fileConfig`), not fixed.
+8. **#45** `init_db()` silences the app loggers (alembic `fileConfig`),
+   not fixed yet. (**#43** subject-tag rule and **#44** filing handled
+   mail into `INBOX.Agent` were closed 2026-09-20 with commit `ec6e6a3`,
+   CI run 35505007958, both jobs success.)
 
 Read the rest of this file chronologically for the *why* behind any of
 the above — this section is only the *what's left*.
