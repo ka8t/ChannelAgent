@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     # owning only the application's tables and the checkpointer its own.
     # Empty: "checkpoints.db" next to the main SQLite database file.
     checkpoint_db_path: str | None = Field(default=None, alias="CHECKPOINT_DB_PATH")
+    # How many pre-migration copies of the database to keep in backups/ next to
+    # it (#66). 0 turns the backup off.
+    migration_backups_keep: int = Field(default=5, alias="MIGRATION_BACKUPS_KEEP")
     model_file: str | None = Field(default=None, alias="MODEL_FILE")
 
     # Telegram adapter

@@ -24,6 +24,7 @@ class AuthDecision:
     allowed: bool
     user: User | None = None
     is_admin: bool = False
+    identity: ChannelIdentity | None = None
 
 
 async def authorize(session: AsyncSession, channel: Channel, user_id: str) -> AuthDecision:
@@ -43,7 +44,7 @@ async def authorize(session: AsyncSession, channel: Channel, user_id: str) -> Au
     allowed = PermissionKind.CHAT in kinds or PermissionKind.ADMIN in kinds
     is_admin = PermissionKind.ADMIN in kinds
 
-    return AuthDecision(allowed=allowed, user=identity.user, is_admin=is_admin)
+    return AuthDecision(allowed=allowed, user=identity.user, is_admin=is_admin, identity=identity)
 
 
 async def grant_permission(

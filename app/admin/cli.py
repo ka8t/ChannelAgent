@@ -136,7 +136,8 @@ def _print_user_detail(detail: service.UserDetail) -> None:
     print("  Channel identities:")
     for i in detail.identities:
         perms = ", ".join(p.value for p in i.permissions) or "no permission"
-        print(f"    [{i.id}] {i.channel.value}/{i.external_id}: {perms}")
+        talks_to = f" -> agent {i.active_agent_id}" if i.active_agent_id else ""
+        print(f"    [{i.id}] {i.channel.value}/{i.external_id}: {perms}{talks_to}")
     if not detail.identities:
         print("    (none)")
     print("  Agents:")
@@ -154,7 +155,7 @@ async def _menu_users() -> None:
             print(f"  [{u.id}] {u.display_name or '(no name)'} ({status})")
         action = _prompt(
             "detail/create/activate/deactivate/add-identity/remove-identity/"
-            "grant/revoke/delete (blank to go back)"
+            "grant/revoke/set-agent/delete (blank to go back)"
         )
         if not action:
             return
@@ -190,6 +191,16 @@ async def _menu_users() -> None:
                 await service.revoke_identity_permission(session, user_id, identity_id, kind)
             await session.commit()
             print(f"{'Granted' if action == 'grant' else 'Revoked'} {kind.value}.")
+        elif action == "set-agent":
+            user_id, identity_id = _int("User id"), _int("Identity id")
+            raw = _prompt("Agent id it talks to (blank = the default agent)")
+            try:
+                agent_id = int(raw) if raw else None
+            except ValueError as exc:
+                raise _BadInput(f"Agent id: expected a number, got {raw!r}") from exc
+            await service.set_identity_agent(session, user_id, identity_id, agent_id)
+            await session.commit()
+            print("Now talking to agent " + (str(agent_id) if agent_id else "default") + ".")
         elif action == "delete":
             user_id = _int("User id")
             purge = _prompt("Type PURGE to also delete agents, logs and conversations (blank = no)")

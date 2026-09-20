@@ -185,8 +185,9 @@ or scoped without restarting the container.
 A `User` (platform-independent) has one `ChannelIdentity` per
 `(channel, external_id)` it's known by. `Permission` is a separate
 table, not a column: each row is `(channel_identity_id, kind)` with
-`kind` one of `chat` (may talk to the agent) or `admin` (may also
-manage other users through the Admin API — see below). Granting is
+`kind` one of `chat` (may talk to the agent) or `admin` (may talk to
+the agent and **receives a message when a new access request arrives**,
+see below). Granting is
 inserting a row, revoking is deleting one; there is no third "no
 permission" state to reconcile.
 
@@ -196,6 +197,20 @@ their Email identity only has `chat`, or none at all. The Auth Node's
 decision (`app/security/auth.py::authorize`) is always evaluated
 against the specific `(channel, user_id)` pair a message arrived on,
 never against the user's permissions on other channels.
+
+**What `admin` does, and what it does not (#53).** An identity holding
+`admin` on a channel with a running sender (Telegram) is sent one message
+per new access request: the channel, the request id and the first message
+(truncated to 200 characters), telling it to approve or deny from the
+console or the API. It is sent once per request, not once per message from
+the same waiting identity, only to active users, and a failed send is logged
+and never stops the message that triggered it. An `admin` identity on email
+is skipped: email stays silent. The `admin` permission does **not**
+authorize anything on the Admin API or the console: those are protected by
+`API_SERVER_KEY` and by access to the machine, not by a user's permission
+([#58](https://github.com/ka8t/ChannelAgent/issues/58) covers hardening the
+key). The user who wrote to the bot is told only that the request "has been
+recorded and an admin will review it".
 
 ### Application-layer encryption
 
@@ -220,6 +235,7 @@ the message and returns to its menu.
 | Area | Admin API | Console menu |
 |---|---|---|
 | Users | `POST/GET /users`, `GET/PATCH/DELETE /users/{id}` (`?purge=true`) | 2: detail, create, activate, deactivate, delete |
+| Agent an identity talks to (#54) | `PUT /users/{id}/channels/{identity_id}/agent` | 2: set-agent |
 | Channel identities | `POST/GET /users/{id}/channels`, `DELETE .../channels/{id}` | 2: add-identity, remove-identity |
 | Permissions | `POST/GET/DELETE .../channels/{id}/permissions[/{kind}]` | 2: grant, revoke |
 | Access requests (#36) | `GET /requests?status=pending\|approved\|denied\|all`, `POST /requests/{id}/approve`, `POST /requests/{id}/deny` | 1 |
@@ -235,9 +251,21 @@ the message and returns to its menu.
   already resolved answers 409, an unknown one 404.
 - **Agents.** Names are unique per user (409), 1 to 100 characters (422). A
   **deactivated agent does not answer**: the user gets a fixed notice, the
-  message is recorded with status `denied` and the LLM is not called. Which
-  agent a message reaches is not selectable yet
-  ([#54](https://github.com/ka8t/ChannelAgent/issues/54)).
+  message is recorded with status `denied` and the LLM is not called.
+- **Which agent a message reaches (#54).** Each channel identity stores the
+  agent it talks to (`channel_identities.active_agent_id`, empty means the
+  user's `default` agent). On Telegram, `/agent` lists the sender's agents
+  (`*` marks the current one, disabled ones are flagged) and `/agent <name>`
+  switches (case-insensitive, names may contain spaces); a name that does not
+  exist, is disabled or belongs to someone else is refused and the choice is
+  kept. The choice is stored, so it survives a restart, and each agent keeps
+  its own conversation (its own `thread_id`). An admin sets it with
+  `PUT /users/{id}/channels/{identity_id}/agent` (`{"agent_id": null}` goes
+  back to the default) or the console (`set-agent`); the agent must belong to
+  the same user. The commands are recorded in the audit trail. A sender who is
+  not authorized gets the normal denial and request instead. Email has no
+  command: it always reaches the selected agent, chosen from Telegram, the API
+  or the console.
 - **Console.** Every menu is wrapped: a mistyped answer, an unknown id or a
   refused operation prints a message and returns to the menu; an unexpected
   error is logged and reported; closing the input ends the session cleanly.
@@ -375,6 +403,23 @@ Schema changes are tracked with [Alembic](https://alembic.sqlalchemy.org/)
 (`app/db/session.py`) runs `alembic upgrade head` at every startup, so
 a schema change never requires dropping the database. See `README.md`'s
 "Database migrations" section for the day-to-day workflow.
+
+**Backup before a migration (#66).** `init_db()` applies pending migrations
+at every start, so starting the application or the console can change the real
+database. When an existing SQLite file is behind head, it is first copied with
+SQLite's online backup API into `backups/` next to it, as
+`<name>-<revision before>-<UTC timestamp>.db`. The copy is then verified (it
+opens, `integrity_check` is `ok`, every table has the same number of rows). If
+it cannot be made or does not check out, **the migration does not run** and the
+start fails. Nothing is done for a file that is already at head, a file that
+does not exist yet, or a non-SQLite database. The last `MIGRATION_BACKUPS_KEEP`
+copies are kept (5 by default, 0 turns it off). The conversation checkpoint
+file is not migrated by Alembic, so it is not copied.
+
+To go back: stop the application, then copy the wanted file from `backups/`
+over the database file, for example
+`cp data/backups/channelagent-<revision>-<timestamp>.db data/channelagent.db`,
+and start the application version that matches that revision.
 
 ### LangGraph orchestrator
 

@@ -6,7 +6,7 @@ neither re-implements the DB queries itself.
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -174,6 +174,43 @@ async def set_agent_active(session: AsyncSession, agent_id: int, is_active: bool
     return agent
 
 
+async def find_agent_by_name(session: AsyncSession, user_id: int, name: str) -> Agent | None:
+    """Case-insensitive exact match on one user's agents."""
+    wanted = name.strip().lower()
+    for agent in await list_agents(session, user_id):
+        if agent.name.lower() == wanted:
+            return agent
+    return None
+
+
+async def resolve_agent(session: AsyncSession, user_id: int, active_agent_id: int | None) -> Agent:
+    """The agent a message from this identity reaches (#54): the one the
+    identity selected, if it still exists and belongs to the user, otherwise
+    the user's default agent.
+    """
+    if active_agent_id is not None:
+        agent = await session.get(Agent, active_agent_id)
+        if agent is not None and agent.user_id == user_id:
+            return agent
+    return await get_or_create_default_agent(session, user_id)
+
+
+async def set_identity_agent(
+    session: AsyncSession, user_id: int, identity_id: int, agent_id: int | None
+) -> ChannelIdentity:
+    """Choose the agent one channel identity talks to. `None` goes back to the
+    default agent. The agent must belong to the same user.
+    """
+    identity = await _identity_of_user(session, user_id, identity_id)
+    if agent_id is not None:
+        agent = await session.get(Agent, agent_id)
+        if agent is None or agent.user_id != user_id:
+            raise AgentNotFoundError(f"No agent {agent_id} for user {user_id}")
+    identity.active_agent_id = agent_id
+    await session.flush()
+    return identity
+
+
 async def record_action(
     session: AsyncSession,
     *,
@@ -197,11 +234,12 @@ async def record_action(
     return entry
 
 
-async def request_access(
+async def ensure_access_request(
     session: AsyncSession, channel: Channel, external_id: str, message_text: str
-) -> AccessRequest:
-    """Upserts a pending request — one row per (channel, external_id),
-    not one per message from a still-unresolved identity.
+) -> tuple[AccessRequest, bool]:
+    """Upserts a pending request: one row per (channel, external_id), not one
+    per message from a still-unresolved identity. The flag says whether the
+    row was just created, so a caller can tell the admins exactly once (#53).
     """
     stmt = select(AccessRequest).where(
         AccessRequest.channel == channel,
@@ -210,11 +248,17 @@ async def request_access(
     )
     existing = (await session.execute(stmt)).scalar_one_or_none()
     if existing is not None:
-        return existing
+        return existing, False
     req = AccessRequest(channel=channel, external_id=external_id, first_message_text=message_text)
     session.add(req)
     await session.flush()
-    return req
+    return req, True
+
+
+async def request_access(
+    session: AsyncSession, channel: Channel, external_id: str, message_text: str
+) -> AccessRequest:
+    return (await ensure_access_request(session, channel, external_id, message_text))[0]
 
 
 async def list_requests(
@@ -415,6 +459,7 @@ class IdentityDetail:
     channel: Channel
     external_id: str
     permissions: list[PermissionKind]
+    active_agent_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -438,6 +483,7 @@ async def get_user_detail(session: AsyncSession, user_id: int) -> UserDetail:
                 channel=identity.channel,
                 external_id=identity.external_id,
                 permissions=[p.kind for p in perms],
+                active_agent_id=identity.active_agent_id,
             )
         )
     return UserDetail(user=user, identities=identities, agents=await list_agents(session, user_id))
@@ -635,6 +681,12 @@ async def delete_user(
         raise UserHasHistoryError(user_id, agents, logs)
 
     thread_ids = await _thread_ids_of_user(session, user_id) if purge else []
+    # An identity that selected an agent references it: clear that first.
+    await session.execute(
+        update(ChannelIdentity)
+        .where(ChannelIdentity.user_id == user_id)
+        .values(active_agent_id=None)
+    )
     await session.execute(delete(ActionLog).where(ActionLog.user_id == user_id))
     await session.execute(delete(Agent).where(Agent.user_id == user_id))
     await session.delete(user)  # cascades to channel identities and permissions

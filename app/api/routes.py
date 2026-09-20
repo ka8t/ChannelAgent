@@ -21,6 +21,7 @@ from app.api.schemas import (
     AgentUpdate,
     ChannelIdentityCreate,
     ChannelIdentityOut,
+    IdentityAgentSet,
     PermissionGrant,
     PermissionOut,
     StorageOut,
@@ -121,6 +122,23 @@ async def delete_channel_identity(
 ) -> None:
     await service.remove_channel_identity(session, user_id, channel_identity_id)
     await session.commit()
+
+
+@router.put(
+    "/users/{user_id}/channels/{channel_identity_id}/agent", response_model=ChannelIdentityOut
+)
+async def set_identity_agent(
+    user_id: int,
+    channel_identity_id: int,
+    body: IdentityAgentSet,
+    session: AsyncSession = Depends(get_db_session),
+) -> ChannelIdentity:
+    """Choose which of the user's agents this channel identity talks to (#54)."""
+    identity = await service.set_identity_agent(
+        session, user_id, channel_identity_id, body.agent_id
+    )
+    await session.commit()
+    return identity
 
 
 # --- Permissions ---

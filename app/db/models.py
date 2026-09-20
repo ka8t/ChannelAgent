@@ -101,6 +101,11 @@ class ChannelIdentity(Base):
     external_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     # Only meaningful for the email channel — see module docstring.
     raw_address: Mapped[str | None] = mapped_column(EncryptedString, default=None)
+    # The agent this identity talks to (#54). None means the user's "default"
+    # agent. Set by the user with /agent <name> or by an admin.
+    active_agent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("agents.id", name="fk_channel_identities_active_agent"), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     user: Mapped["User"] = relationship(back_populates="channel_identities")

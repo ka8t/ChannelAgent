@@ -9,9 +9,10 @@ import asyncio
 import logging
 
 from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from app.channels.dispatch import dispatch_event
+from app.channels import notify
+from app.channels.dispatch import dispatch_event, handle_agent_command
 from app.channels.schema import NormalizedEvent
 from app.config import get_settings
 from app.db.models import Channel
@@ -20,20 +21,33 @@ from app.db.session import session_scope
 logger = logging.getLogger("channelagent")
 
 
-async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if update.message is None or update.message.text is None or update.effective_user is None:
-        return
-
-    user_id = str(update.effective_user.id)
-    text = update.message.text
+def _event(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> NormalizedEvent:
     chat_id = update.effective_chat.id
 
     async def reply(response_text: str) -> None:
         await context.bot.send_message(chat_id=chat_id, text=response_text)
 
-    event = NormalizedEvent(user_id=user_id, channel=Channel.TELEGRAM, text=text, reply=reply)
+    return NormalizedEvent(
+        user_id=str(update.effective_user.id), channel=Channel.TELEGRAM, text=text, reply=reply
+    )
+
+
+async def _on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.message.text is None or update.effective_user is None:
+        return
+    event = _event(update, context, update.message.text)
     async with session_scope() as session:
         await dispatch_event(session, event)
+
+
+async def _on_agent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/agent lists the sender's agents, /agent <name> switches (#54)."""
+    if update.message is None or update.effective_user is None:
+        return
+    argument = " ".join(context.args or [])
+    event = _event(update, context, f"/agent {argument}".strip())
+    async with session_scope() as session:
+        await handle_agent_command(session, event, argument)
 
 
 def build_application() -> Application:
@@ -42,6 +56,7 @@ def build_application() -> Application:
         raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
     application = Application.builder().token(token).build()
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _on_message))
+    application.add_handler(CommandHandler("agent", _on_agent))
     return application
 
 
@@ -55,9 +70,15 @@ async def run_telegram_adapter() -> None:
     async with application:
         await application.start()
         await application.updater.start_polling(drop_pending_updates=True)
+
+        async def send_to_admin(external_id: str, text: str) -> None:
+            await application.bot.send_message(chat_id=int(external_id), text=text)
+
+        notify.register_sender(Channel.TELEGRAM, send_to_admin)
         logger.info("Telegram adapter started (long polling).")
         try:
             await asyncio.Event().wait()  # runs until this task is cancelled
         finally:
+            notify.unregister_sender(Channel.TELEGRAM)
             await application.updater.stop()
             await application.stop()

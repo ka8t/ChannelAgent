@@ -88,6 +88,12 @@ def test_building_the_application_requires_a_token(monkeypatch):
         telegram.build_application()
 
 
+class _StubBot:
+    """CommandHandler reads the bot's username to recognize /command@bot."""
+
+    username = "testbot"
+
+
 def _real_update(text: str, entities=None):
     from telegram import Update
 
@@ -103,23 +109,32 @@ def _real_update(text: str, entities=None):
                 **({"entities": entities} if entities else {}),
             },
         },
-        None,
+        _StubBot(),
     )
 
 
-def test_the_handler_takes_plain_text_and_not_commands(monkeypatch):
+def test_the_handlers_take_plain_text_and_the_agent_command_only(monkeypatch):
     from app.config import get_settings
 
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123456:ABCDEF-test-token")
     get_settings.cache_clear()
     application = telegram.build_application()
     handlers = [h for group in application.handlers.values() for h in group]
-    assert len(handlers) == 1
-    handler = handlers[0]
-    assert handler.callback is telegram._on_message
-    assert handler.check_update(_real_update("hello")) is not None
-    command = _real_update("/start", [{"type": "bot_command", "offset": 0, "length": 6}])
-    assert not handler.check_update(command)
+    assert len(handlers) == 2
+    by_callback = {h.callback: h for h in handlers}
+    text_handler, agent_handler = by_callback[telegram._on_message], by_callback[telegram._on_agent]
+
+    def command(name, arg=""):
+        text = f"/{name} {arg}".strip()
+        return _real_update(text, [{"type": "bot_command", "offset": 0, "length": len(name) + 1}])
+
+    assert text_handler.check_update(_real_update("hello")) is not None
+    assert not text_handler.check_update(command("agent", "work")), "commands are not plain text"
+    assert agent_handler.check_update(command("agent", "work")) is not None
+    assert agent_handler.check_update(command("agent")) is not None
+    assert not agent_handler.check_update(_real_update("hello"))
+    assert not agent_handler.check_update(command("start")), "other commands stay ignored"
+    assert not text_handler.check_update(command("start"))
 
 
 class _FakeApplication:

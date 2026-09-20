@@ -93,6 +93,13 @@ def _run_migrations_sync(database_url: str) -> None:
     # Keep the application's logging configuration: alembic/env.py would
     # otherwise call fileConfig() and disable the app's loggers (#45).
     cfg.attributes["configure_logger"] = False
+    # Copy the database first if a migration is about to change it (#66).
+    from alembic.script import ScriptDirectory
+
+    from app.db.backup import backup_before_migration
+
+    head = ScriptDirectory.from_config(cfg).get_current_head()
+    backup_before_migration(database_url, head, get_settings().migration_backups_keep)
     upgrade(cfg, "head")
 
 

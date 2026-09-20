@@ -45,6 +45,13 @@ class ChannelIdentityOut(BaseModel):
     id: int
     channel: Channel
     external_id: str
+    active_agent_id: int | None = None
+
+
+class IdentityAgentSet(BaseModel):
+    """`agent_id: null` goes back to the user's default agent."""
+
+    agent_id: int | None
 
 
 class PermissionGrant(BaseModel):

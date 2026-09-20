@@ -85,6 +85,10 @@ missing) and fill in:
   port on) both default to `127.0.0.1`. To administer remotely use an SSH
   tunnel or a TLS reverse proxy, see `docs/ARCHITECTURE.md` ("Admin API
   exposure").
+- `MIGRATION_BACKUPS_KEEP` — default 5. Before a migration changes an
+  existing database, it is copied into `backups/` next to it and the copy is
+  verified; if that fails the migration does not run. `0` turns it off.
+  Restore instructions: `docs/ARCHITECTURE.md` ("Database and migrations").
 - `CHECKPOINT_DB_PATH` — where conversations are stored so they survive a
   restart. Empty (the default) means `checkpoints.db` next to the main
   database, inside the Docker volume. The content is encrypted with
@@ -200,7 +204,10 @@ permissions, approve or deny access requests (`GET /requests`,
 `POST /requests/{id}/approve|deny`), and create, rename and activate or
 deactivate any user's agents (`/users/{id}/agents`, `/agents/{id}`). The
 full table is in `docs/ARCHITECTURE.md` ("Admin API and console over one
-service layer"). Deleting a user who has history is refused unless you
+service layer"). On Telegram a user with several agents chooses with `/agent` (list) and
+`/agent <name>` (switch); an admin can set it per identity from the console
+or `PUT /users/{id}/channels/{identity_id}/agent`. Deleting a user who has
+history is refused unless you
 purge (`DELETE /users/{id}?purge=true`, or type `PURGE` in the console).
 
 ## Searching the audit trail

@@ -330,6 +330,7 @@ MUTATORS = [
     "create_user",
     "remove_channel_identity",
     "delete_user",
+    "set_identity_agent",
 ]
 
 # name: (api call, console menu, console answers, service functions expected)
@@ -407,6 +408,18 @@ OPERATIONS = {
         "_menu_users",
         ["delete", "1", "PURGE"],
         ["delete_user"],
+    ),
+    "set-agent": (
+        lambda c: c.put("/users/1/channels/1/agent", json={"agent_id": 1}, headers=AUTH),
+        "_menu_users",
+        ["set-agent", "1", "1", "1"],
+        ["set_identity_agent"],
+    ),
+    "reset-agent": (
+        lambda c: c.put("/users/1/channels/1/agent", json={"agent_id": None}, headers=AUTH),
+        "_menu_users",
+        ["set-agent", "1", "1", ""],
+        ["set_identity_agent"],
     ),
     "remove-identity": (
         lambda c: c.delete("/users/1/channels/1", headers=AUTH),
