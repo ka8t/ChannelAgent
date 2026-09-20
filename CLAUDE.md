@@ -9,7 +9,7 @@ State at pause, verified facts, not narrative:
   **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
-  miscount): **38 closed, 16 open** after the 2026-09-20 audit (9 issues created, 4 reopened) and the closing of #39, #40, #52 (`gh issue list --repo
+  miscount): **34 closed, 28 open** after the 2026-09-20 audit (17 issues created, 4 reopened). #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
   ka8t/ChannelAgent --state open/closed --json number | jq length`).
 - `pytest`: **126 passed, 0 failed** (24 at pause, +24 for the shared
   mailbox rules below, +2 for #45, +39 for #39, +23 for #40, +14 for #52). `ruff check .`: 0 issues.
@@ -35,16 +35,23 @@ State at pause, verified facts, not narrative:
    unused), #54 (agents other than `default` are unreachable, needs a
    design decision), #46 (missing automated tests).
 4. **P3:** #47 (history never trimmed), #48 (no healthcheck).
+   **Traced from the re-audit of #39/#40/#45/#52** (each has its own
+   open questions in the issue): #55 undecryptable row breaks search and
+   no key backup/rotation procedure, #56 search speed and ordering
+   unmeasured, #57 storage overview can drift from the schema, #58 API
+   authentication hardening, #59 admin actions not audited, #60 TLS
+   recipe only documented, #61 verification debt (four checks not re-run),
+   #62 repository access and visibility.
 5. **Set aside by the user on 2026-09-20:** #29 Matrix (still blocked on
    real credentials) and #42 dedicated bot mailbox.
 6. Epics **#6** (only #29 left), **#35** (until #36/#37/#41 close) and
    **#3** stay open.
-7. **Repository access, facts only, to raise with the user:** `gh api`
+7. **Repository access, tracked in #62:** `gh api`
    shows collaborator `FpTargeT` with **push (write)** access, one
    pending invitation with write permission and no login (created
    2026-09-19T13:34Z), and Brian's (`hitweb`, read) still pending since
    2026-09-18. The earlier "Franck not added" note is obsolete.
-8. Open question from the user, not yet decided: whether to make
+8. Open question, tracked in #62: whether to make
    `ChannelAgent` public so the deprecation notice added to the public
    `Hermes` repo actually resolves for outside readers.
 
@@ -66,6 +73,28 @@ the above — this section is only the *what's left*.
 - **Secrets**: never commit `.env` or key material. `ENCRYPTION_KEY`
   and other secrets live only in `.env` (git-ignored), never in the
   database, never hardcoded.
+- **Trace every question in an issue, no pending confirmations in chat
+  (user, 2026-09-20: "je ne veux pas de points en attente de
+  confirmation. Je veux que tous les questionnements soient aussi tracés
+  dans des issues").** Any gap, doubt, caveat, unverified check or design
+  decision becomes an issue, or an "Open question(s) (answer here)"
+  comment (options, recommendation, "Done when" with numbers) on the
+  relevant issue. Reports end with what was done and where each remaining
+  point is tracked, not with a list of questions. No "not covered" caveat
+  without a linked issue.
+- **NEVER close an issue without the user's explicit consent (user,
+  2026-09-20: "ne prends JAMAIS de décision de fermer une issue sans mon
+  consentement").** Closing is the user's decision, not the assistant's,
+  even with complete evidence and green CI. When work looks done: post the
+  evidence and a status comment on the still-open issue ("implemented,
+  nothing pending, closing is the owner's decision") and leave it open;
+  do not ask in chat. "Continue", "commit and push" and
+  "ok for the plan" are not consent to close. This includes `gh issue
+  close`, `Closes #N` keywords in commit messages, and reopening an issue
+  that was closed without consent (list it and ask). On 2026-09-20 #45,
+  #39, #40 and #52 were closed without consent; the user then had all
+  four reopened, and they stay open until the user allows closing them. #43 and #44 were closed after a question that
+  named the closing and got a "yes".
 - **Do not close what is not resolved (user, 2026-09-20: "ne ferme pas
   si ce n'est pas résolu").** Compare the issue's whole *scope* with the
   code, not only its acceptance criteria: the 2026-09-20 audit reopened
