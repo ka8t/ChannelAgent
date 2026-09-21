@@ -172,12 +172,11 @@ unknown sender only creates a pending request.
 Tracking: the tag rule is [#43](https://github.com/ka8t/ChannelAgent/issues/43),
 the folder is [#44](https://github.com/ka8t/ChannelAgent/issues/44).
 
-**Future evolution
-([#42](https://github.com/ka8t/ChannelAgent/issues/42)).** Give the bot
-its own dedicated address, used only by the Email adapter. The tag is
-then no longer needed to protect ordinary mail, and can be removed or
-kept as an optional extra filter. This only needs the `EMAIL_*`
-variables to point at the new mailbox, plus the decision about the tag.
+**A dedicated bot mailbox was considered and dropped
+([#42](https://github.com/ka8t/ChannelAgent/issues/42), owner, 2026-09-21).**
+The tag rule on the shared mailbox works and was tested against the real
+mailbox, so it stays. Should the bot ever get its own address, only the
+`EMAIL_*` variables would change, plus the decision about the tag.
 
 ### Event Normalizer and Auth Node
 

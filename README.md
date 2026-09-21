@@ -66,9 +66,8 @@ missing) and fill in:
   bot only reads and answers messages whose **subject contains this
   tag**, for example `[agent] what is on my list today?`. Every other
   message is left untouched and unread. Replies keep the tag, so a
-  conversation continues without retyping it. Rules and the planned move
-  to a dedicated bot mailbox
-  ([#42](https://github.com/ka8t/ChannelAgent/issues/42)):
+  conversation continues without retyping it. Rules (a dedicated bot mailbox,
+  [#42](https://github.com/ka8t/ChannelAgent/issues/42), was dropped):
   `docs/ARCHITECTURE.md`, section "Email on a shared mailbox".
 - `EMAIL_AGENT_FOLDER` — default `INBOX.Agent`. A handled agent message
   is moved here so it leaves the `INBOX` that humans read (the folder is
