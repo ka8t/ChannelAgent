@@ -22,6 +22,13 @@
 #   ./start.sh --describe [--json]        -> every command, with its method, path and scope
 #   ./start.sh --api COMMAND [--flag value ...] [--json]
 #
+# And the models (#104), short forms of the generated commands list-models, pull-model,
+# import-model and delete-model:
+#   ./start.sh --models list [--json]
+#   ./start.sh --models pull <repo[:quant]|https-url> [--name N.gguf] [--json]
+#   ./start.sh --models import <path-to-a-gguf> [--name N.gguf] [--json]
+#   ./start.sh --models delete <name.gguf> [--json]
+#
 # Plus the interactive admin console (#41) — users, access requests,
 # agents, action logs — over the local venv, no llama-server needed:
 #   ./start.sh --admin
@@ -289,6 +296,7 @@ case "${1:-}" in
   --rekey) MODE="rekey" ;;
   --describe) MODE="describe" ;;
   --api) MODE="api" ;;
+  --models) MODE="models" ;;
 esac
 
 echo "==> ChannelAgent start.sh (mode: $MODE)"
@@ -347,7 +355,39 @@ fi
 if [ "$MODE" = "api" ]; then
   setup_venv
   shift
+  # In process, the client runs on the host, where host.docker.internal does not resolve:
+  # reach the engine the way --native does. Over HTTP the running application has its own.
+  export LLAMA_SERVER_URL="http://localhost:${LLAMA_PORT:-8080}"
   exec python3 -m app.admin.client "$@"
+fi
+
+# --- Models (#104): short forms of the generated commands ---
+if [ "$MODE" = "models" ]; then
+  setup_venv
+  shift
+  export LLAMA_SERVER_URL="http://localhost:${LLAMA_PORT:-8080}"
+  models_sub="${1:-}"
+  [ "$#" -gt 0 ] && shift
+  case "$models_sub" in
+    list) exec python3 -m app.admin.client list-models "$@" ;;
+    pull|import|delete)
+      models_arg="${1:-}"
+      if [ -z "$models_arg" ]; then
+        echo "Usage: ./start.sh --models ${models_sub} <argument> [--name N.gguf] [--json]" >&2
+        exit 1
+      fi
+      shift
+      case "$models_sub" in
+        pull) exec python3 -m app.admin.client pull-model --spec "$models_arg" "$@" ;;
+        import) exec python3 -m app.admin.client import-model --path "$models_arg" "$@" ;;
+        delete) exec python3 -m app.admin.client delete-model --name "$models_arg" "$@" ;;
+      esac
+      ;;
+    *)
+      echo "Usage: ./start.sh --models list | pull <repo[:quant]|url> | import <path> | delete <name>" >&2
+      exit 1
+      ;;
+  esac
 fi
 
 # --- Restore a backup: same venv, no llama-server, the application must be stopped ---

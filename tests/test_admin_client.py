@@ -31,9 +31,11 @@ def env(fresh_db, monkeypatch, tmp_path):
     """The environment the script reads (`start.sh` exports it from .env) and a private
     .env for the configuration routes.
     """
+    from app.admin.jobs import registry
     from app.api import deps
     from app.config import get_settings
 
+    registry.clear()  # jobs live in the process: no other test's jobs in this one
     old_umask = os.umask(0)
     os.umask(old_umask)  # the client hardens the process umask, as the console does
     example, envfile = tmp_path / ".env.example", tmp_path / ".env"
@@ -47,6 +49,7 @@ def env(fresh_db, monkeypatch, tmp_path):
     deps.reset_failure_state()
     yield
     os.umask(old_umask)
+    registry.clear()
     deps.reset_failure_state()
 
 

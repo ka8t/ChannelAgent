@@ -27,6 +27,7 @@ real code for good.
 | `tools/verify_closed_issues.py` | Fresh end-to-end check of closed issues on a throwaway database and a mock model. |
 | `tools/run_test_groups.py` | Runs the targeted test files of each issue and prints the last pytest line. |
 | `tools/mock_llm_counting.py`, `tools/run_turns.py` | A mock model that answers with the number of messages it received, and a client that runs N turns (used to show a conversation surviving a restart). |
+| `no_network_turn.py` | One real chat turn against the live engine with every connection outside this machine refused and counted (#138); prints the completion's HTTP status and the count (expected 0). |
 | `tools/repro_request_unique_constraint.py` | Reproduces #85 (denied person writes again: `IntegrityError`) on a throwaway database. |
 | `tools/check_claude_split.py` | Checks that no rule bullet was lost when `CLAUDE.md` was split (#71). |
 | `tools/scan_changed_files.sh` | gitleaks on the changed and new files only (the whole tree includes the real `.env`). |

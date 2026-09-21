@@ -64,6 +64,11 @@ VALID = {
     "ALLOWED_HOSTS": "localhost,127.0.0.1,::1",
     "API_MAX_BODY_BYTES": "1048576",
     "API_REQUEST_TIMEOUT_SECONDS": "60",
+    "MODEL_HUB_URL": "https://huggingface.co",
+    "MODEL_PULL_ALLOWED_HOSTS": "cdn.example.org,models.example.net",
+    "MODEL_PULL_MAX_BYTES": "68719476736",
+    "MODEL_PULL_TIMEOUT_SECONDS": "21600",
+    "HF_TOKEN": "hf_abcdefghijklmnop",
     "API_SERVER_KEY": HEX_KEY,
 }
 
@@ -112,6 +117,9 @@ INVALID = MEASURED + [
     ("API_MAX_BODY_BYTES", "0"),
     ("API_MAX_BODY_BYTES", ""),
     ("API_REQUEST_TIMEOUT_SECONDS", "-5"),
+    ("MODEL_PULL_MAX_BYTES", "0"),
+    ("MODEL_PULL_TIMEOUT_SECONDS", "abc"),
+    ("MODEL_HUB_URL", "not a url"),
     ("API_SERVER_KEY", "a" * 40),
     ("API_SERVER_KEY", "changeme-changeme-changeme"),
     ("ENCRYPTION_KEY", "x" * 44),
@@ -140,7 +148,7 @@ def test_an_unknown_rule_kind_is_an_error_not_a_silent_accept():
 
 def test_the_kinds_are_the_ones_the_module_knows():
     known = {
-        "free", "fernet_key", "port", "uint", "posint", "host", "ip", "http_url",
+        "free", "fernet_key", "port", "uint", "posint", "bytes", "host", "ip", "http_url",
         "database_url", "telegram_token", "telegram_users", "matrix_user", "api_key",
         "email_tag", "email_folder",
     }  # fmt: skip

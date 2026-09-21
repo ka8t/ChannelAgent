@@ -114,6 +114,9 @@ def _meaning(kind: str, value: str) -> str | None:
     elif kind == "posint":
         if not _UINT.fullmatch(value) or int(value) < 1:
             return "must be a whole number, 1 or more"
+    elif kind == "bytes":
+        if not re.fullmatch(r"[0-9]{1,15}", value) or int(value) < 1:
+            return "must be a whole number of bytes, 1 or more"
     elif kind == "host":
         if not (_ip(value) or _HOSTNAME.fullmatch(value)):
             return "must be a host name (letters, digits, dots, hyphens) or an IP address"
@@ -190,6 +193,11 @@ RULES: dict[str, str] = {
     "ALLOWED_HOSTS": "free",
     "API_MAX_BODY_BYTES": "posint",
     "API_REQUEST_TIMEOUT_SECONDS": "posint",
+    "MODEL_HUB_URL": "http_url",
+    "MODEL_PULL_ALLOWED_HOSTS": "free",
+    "MODEL_PULL_MAX_BYTES": "bytes",
+    "MODEL_PULL_TIMEOUT_SECONDS": "posint",
+    "HF_TOKEN": "free",
 }
 
 # Variables that cannot be empty: they have a default and an empty value would
@@ -211,6 +219,9 @@ REQUIRED = frozenset(
         "API_BIND_ADDRESS",
         "API_MAX_BODY_BYTES",
         "API_REQUEST_TIMEOUT_SECONDS",
+        "MODEL_HUB_URL",
+        "MODEL_PULL_MAX_BYTES",
+        "MODEL_PULL_TIMEOUT_SECONDS",
     }
 )
 
@@ -268,6 +279,7 @@ SENSITIVE = frozenset(
         "EMAIL_PASSWORD",
         "MATRIX_ACCESS_TOKEN",
         "MATRIX_BOT_ACCESS_TOKEN",
+        "HF_TOKEN",
     }
 )
 

@@ -90,6 +90,16 @@ class Settings(BaseSettings):
     api_max_body_bytes: int = Field(default=1_048_576, alias="API_MAX_BODY_BYTES")
     api_request_timeout_seconds: int = Field(default=60, alias="API_REQUEST_TIMEOUT_SECONDS")
 
+    # Model management (#104). The directory of the `.gguf` files (start.sh reads the same
+    # variable to start the engine), the hub a model is pulled from, the extra hosts a pull
+    # may reach, the size and time limits of one pull, and the token for gated models.
+    models_dir: str = Field(default="models", alias="MODELS_DIR")
+    model_hub_url: str = Field(default="https://huggingface.co", alias="MODEL_HUB_URL")
+    model_pull_allowed_hosts: str = Field(default="", alias="MODEL_PULL_ALLOWED_HOSTS")
+    model_pull_max_bytes: int = Field(default=64 * 1024**3, alias="MODEL_PULL_MAX_BYTES")
+    model_pull_timeout_seconds: int = Field(default=6 * 3600, alias="MODEL_PULL_TIMEOUT_SECONDS")
+    hf_token: str | None = Field(default=None, alias="HF_TOKEN")
+
 
 @lru_cache
 def get_settings() -> Settings:

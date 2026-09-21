@@ -387,6 +387,29 @@ bash: they act on processes and containers and must work when no API can, which 
 The engine started by `start.sh` gets a cleared environment (`env -i`, only `PATH`, `HOME`,
 `TMPDIR`, `LANG`), so it does not inherit the secrets of `.env`.
 
+**Models (#104).** The models are the `.gguf` files of `MODELS_DIR` (`./models`, git-ignored),
+each with an optional `<name>.gguf.sha256`. `GET /models` lists them with size, recorded SHA256, and
+whether the engine has loaded them (`/props`) or `MODEL_FILE` names them; `DELETE /models/{name}`
+refuses the loaded and the configured model. `POST /models/import` copies a local GGUF file and
+`POST /models/pull` downloads `<repo>[:quant]` from `MODEL_HUB_URL` or an https URL; both are jobs
+that write `<name>.part` and rename it into place, refuse a name that exists (unless `force`), and
+leave no partial file when cancelled, except a pull, which keeps its `.part` so the same pull
+resumes with a `Range` request. A name is `[A-Za-z0-9][A-Za-z0-9._-]*.gguf`, never a path, and a
+link inside the directory is never followed. The SHA256 is compared with the hub's (`x-linked-etag`)
+or the one given. Where there is no models directory (the application in its container) the routes
+answer 409. `./start.sh --models list|pull|import|delete` are short forms of `list-models`,
+`pull-model`, `import-model`, `delete-model`.
+
+Every request a pull makes goes through `app/security/outbound.py`: https only, no credentials in
+the URL, a host on the allow-list (the hub, `hf.co`, and `MODEL_PULL_ALLOWED_HOSTS`, subdomains
+included), every resolved address public (multicast and NAT64 or 6to4 addresses that carry a
+private address are refused), the connection made to the address that was checked with the
+original `Host` header and TLS server name, and each redirect through the same check. The token
+`HF_TOKEN` goes to the hub host only and is redacted from every log. `MODEL_PULL_MAX_BYTES` (64 GiB)
+and `MODEL_PULL_TIMEOUT_SECONDS` (6 h) bound a pull. None of this is reachable from a chat turn: a
+test refuses every connection outside the machine during a turn and checks that the inference path
+imports none of it.
+
 **Rotating API_SERVER_KEY.**
 1. Generate a new key: `openssl rand -hex 32`.
 2. Put it in `.env` (`./start.sh --set API_SERVER_KEY=<value>`).

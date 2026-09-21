@@ -9,7 +9,7 @@ itself.
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.db.models import ActionStatus, Channel, Direction, PermissionKind, RequestStatus
 
@@ -230,3 +230,27 @@ class ConfigSetOut(BaseModel):
     changed: bool
     backup: str
     applies: str
+
+
+class ModelOut(BaseModel):
+    name: str
+    size_bytes: int
+    sha256: str | None
+    modified_at: datetime
+    loaded: bool
+    configured: bool
+
+
+class ModelImportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str
+    name: str | None = None
+    force: bool = False
+
+
+class ModelPullIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    spec: str
+    name: str | None = None
+    sha256: str | None = Field(default=None, pattern="^[0-9a-fA-F]{64}$")
+    force: bool = False

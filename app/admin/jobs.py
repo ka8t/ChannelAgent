@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from app.admin.service import ConflictError, NotFoundError
+from app.admin.service import ConflictError, InvalidInputError, NotFoundError
 from app.logging_setup import scrub
 
 logger = logging.getLogger("channelagent")
@@ -66,7 +66,8 @@ class JobRegistry:
             job.progress = 1.0
         except asyncio.CancelledError:
             job.status = "cancelled"
-        except JobError as exc:
+        except (JobError, ConflictError, InvalidInputError, NotFoundError) as exc:
+            # written to be shown to the administrator, unlike any other exception
             job.status, job.error = "failed", scrub(str(exc))[:300]
         except Exception:  # noqa: BLE001 - the detail goes to the log, not to the caller
             error_id = uuid.uuid4().hex[:12]

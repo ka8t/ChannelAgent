@@ -43,6 +43,7 @@ def configured_secrets() -> list[str]:
         settings.encryption_key,
         settings.email_password,
         settings.matrix_bot_access_token,
+        settings.hf_token,
         os.environ.get("OLD_ENCRYPTION_KEY"),
     ]
     return [v for v in values if v and len(v) >= MIN_SECRET_LENGTH]
