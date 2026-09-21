@@ -177,20 +177,18 @@ Facts, refreshed when they change; the issues have the detail.
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
   adapters are live; Matrix (#29) was abandoned and the dedicated bot mailbox (#42)
   dropped, the `[agent]` tag on the shared mailbox stays (owner, 2026-09-21).
-- Last full test suite: 1052 passed, 0 failed (128 s), `ruff check .` clean
-  (2026-09-21, working tree after cef5596: #86, #87, #89, #90 done, uncommitted).
+- Last full test suite: 1055 passed, 0 failed (129 s), `ruff check .` clean
+  (2026-09-21, on 2278d7f).
   Targeted runs while working; the full suite once per batch, before a commit
   (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).
   Re-enable only when asked (`gh workflow enable 361230655`). Dependabot updates
   still run.
-- Open work by tier: all P0 closed. P1: #6 (epic, needs #29), #72 (owner
-  checklist), #84 (fixed and pushed, waits for the owner to close). P2: #29
-  (set aside). P3 implemented and pushed (cef5596), each with a
-  status comment and the closing left to the owner: #47, #48, #56, #57, #60,
-  #64, #65, #70, #71 (this file), #77, #78, #85 and #93 (P2, found on the way); open points: #86 to #102.
-  Set aside: #42. #61 has its quoted results (checks 4 and 7 not run live, by
-  the owner's decision).
+- Open issues (2026-09-21): #72 (plan, closes after the owner reads the final audit),
+  #92 (TLS with a public name, waits for a VPS and a domain), #101 (owner deletes
+  `.env.pre-rekey` and the prerekey copies once the new key is stored). Everything
+  else is implemented, pushed and closed. Matrix (#29) was abandoned, the dedicated
+  mailbox (#42) dropped.
 - The owner's live container `channelagent-channelagent-1` (127.0.0.1:8700)
   runs the real app on the real `data/` and polls the real Telegram bot. Never
   start a second instance with the same token, never restart it uninvited.

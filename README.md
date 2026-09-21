@@ -20,7 +20,7 @@ topology test). The Admin API (epic #5) and the agent/request/logging
 mechanics with an interactive console (`./start.sh --admin`, epic #35)
 are both done. Telegram (#27) and Email (#28) adapters are live and
 verified with real end-to-end round trips; Matrix (#29) was abandoned on 2026-09-21 and is not
-implemented. 1052 automated tests, 0 failing. Full picture, always current: `gh issue list --repo
+implemented. 1055 automated tests, 0 failing. Full picture, always current: `gh issue list --repo
 ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
 the exact resume checklist.
 
@@ -220,15 +220,14 @@ Requires, set in `.env`:
 config` fails with a clear message naming whichever of these isn't set
 — confirmed directly, not just documented.
 
-This has been verified as far as this development environment allows:
-the compose file's merge resolves correctly (confirmed via `config`,
-`LLAMA_SERVER_URL` correctly becomes `http://llama-server:8080` and
-`channelagent` correctly waits on `llama-server`'s healthcheck) and
-`docker/llama-server.Dockerfile` builds. **Not yet verified**: an
-actual inference round trip through this topology — that needs a real
-Linux `llama-server` binary and a Linux Docker host, neither available
-in this environment (the Mac's own `llama-server` binary is macOS-only
-and won't run in this container).
+Verified: the compose merge resolves (`config`: `LLAMA_SERVER_URL` becomes
+`http://llama-server:8080`, `channelagent` waits on `llama-server`'s healthcheck) and
+`docker/llama-server.Dockerfile` builds. The whole topology was last run end to end on
+2026-09-18 with a real Linux `llama-server` in Docker Desktop's Linux VM (`app.graph.run_turn`
+returned a real completion, `Pong!`). On 2026-09-21 the owner replaced a re-run of the
+production overlay by the local topology: a container calling the Mac's native
+`llama-server` through `host.docker.internal:8080` returned a real completion and kept the
+conversation history (#61).
 
 ## Administering users, requests and agents
 
