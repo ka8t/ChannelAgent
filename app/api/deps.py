@@ -14,23 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.session import get_sessionmaker
 
-logger = logging.getLogger("channelagent.api")
+# The key rule lives in app.settings_rules, which `./start.sh --set` also runs (#75):
+# the API and the command that writes the key can never disagree.
+from app.settings_rules import MIN_API_KEY_LENGTH, api_key_is_acceptable  # noqa: F401
 
-MIN_API_KEY_LENGTH = 16
-MIN_DISTINCT_CHARACTERS = 6
-MAX_REPEAT_PERIOD = 8
-PLACEHOLDER_FRAGMENTS = (
-    "changeme",
-    "change_me",
-    "change-me",
-    "password",
-    "placeholder",
-    "your_",
-    "your-",
-    "example",
-    "0123456789",
-    "abcdefghij",
-)
+logger = logging.getLogger("channelagent.api")
 
 # Failed-attempt limiter (#58): at most FAILURE_LIMIT failures per source
 # address inside FAILURE_WINDOW_SECONDS, then 429 for everything from that
@@ -49,31 +37,6 @@ def _now() -> float:
 
 def reset_failure_state() -> None:
     _failures.clear()
-
-
-def _is_repeating(key: str) -> bool:
-    """True when the whole key is one short unit repeated (`abab...`)."""
-    return any(
-        all(key[i] == key[i - period] for i in range(period, len(key)))
-        for period in range(1, MAX_REPEAT_PERIOD + 1)
-    )
-
-
-def api_key_is_acceptable(key: str | None) -> bool:
-    """A weak bearer key is guessable, and it is the only thing protecting
-    decrypted conversations (#52, #58). The API refuses to start with one
-    instead of running with it: too short, a repeated character or short
-    repeating pattern, fewer than 6 distinct characters, or a known
-    placeholder.
-    """
-    if not key or len(key) < MIN_API_KEY_LENGTH:
-        return False
-    lowered = key.lower()
-    if any(fragment in lowered for fragment in PLACEHOLDER_FRAGMENTS):
-        return False
-    if len(set(key)) < MIN_DISTINCT_CHARACTERS:
-        return False
-    return not _is_repeating(key)
 
 
 def _source(request: Request) -> str:

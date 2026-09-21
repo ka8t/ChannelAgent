@@ -20,6 +20,11 @@
 # agents, action logs — over the local venv, no llama-server needed:
 #   ./start.sh --admin
 #
+# And the guided restore of a database backup (#76), with the application
+# stopped: lists the backups, checks the chosen one, keeps the current database
+# as a "before-restore" copy, then swaps it in:
+#   ./start.sh --restore [FILE] [--list] [--yes] [--allow-unreadable]
+#
 # Both run modes need a native llama-server running on this Mac first
 # (Metal-accelerated inference). If it isn't already reachable on
 # LLAMA_PORT, this script starts it itself, using LLAMA_SERVER_BIN /
@@ -75,6 +80,9 @@ def load(path):
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 key, _, value = line.partition("=")
+                # --set writes a value with special characters in single quotes (#80)
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1]
                 values[key] = value
     except FileNotFoundError:
         pass
@@ -114,7 +122,6 @@ set_config() {
   python3 - "$key" "$value" <<'PYEOF'
 import difflib
 import os
-import re
 import sys
 
 key, value = sys.argv[1], sys.argv[2]
@@ -143,7 +150,7 @@ with open(path) as f:
 # rotation tool re-encrypts the data under a new key (#74). It is never echoed.
 if key == "ENCRYPTION_KEY":
     current = next((ln.split("=", 1)[1].strip() for ln in lines if ln.startswith("ENCRYPTION_KEY=")), "")
-    if current:
+    if current.strip("'\"") != "":  # ENCRYPTION_KEY='' is empty
         print(
             "ENCRYPTION_KEY is already set and was NOT changed: replacing it would make every "
             "encrypted value unreadable. Rotate it with the rotation tool, which re-encrypts the "
@@ -152,14 +159,22 @@ if key == "ENCRYPTION_KEY":
             file=sys.stderr,
         )
         sys.exit(1)
-    if not re.fullmatch(r"[A-Za-z0-9_-]{43}=", value):  # 32 bytes, url-safe base64
-        print(
-            "ENCRYPTION_KEY was NOT changed: it must be a Fernet key (32 bytes, url-safe base64, "
-            "44 characters). Generate one with: python3 -c \"import base64, os; "
-            "print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+
+# The value rules (ports, hosts, URLs, key strength, the Fernet format...) and how a
+# value is written to .env are app/settings_rules.py, the same module the
+# application imports for the API key rule (#75, #80). Nothing is written when it
+# says no, or when it cannot be loaded.
+sys.path.insert(0, os.path.join(os.getcwd(), "app"))
+try:
+    import settings_rules
+except ImportError as exc:
+    print(f"{key} was NOT changed: the value rules could not be loaded ({exc}).", file=sys.stderr)
+    sys.exit(1)
+reason = settings_rules.validate(key, value)
+if reason:
+    print(f"{key} was NOT changed: the value {reason}", file=sys.stderr)
+    sys.exit(1)
+written = settings_rules.format_value(value)
 
 # Every change keeps the previous .env as .env.bak (one generation, mode 600, git-ignored)
 # so a bad edit can be undone. Written only once the change is accepted.
@@ -176,13 +191,13 @@ print("Previous .env saved as .env.bak (mode 600).")
 found = False
 for i, line in enumerate(lines):
     if line.startswith(f"{key}="):
-        lines[i] = f"{key}={value}\n"
+        lines[i] = f"{key}={written}\n"
         found = True
         break
 if not found:
     if lines and not lines[-1].endswith("\n"):
         lines[-1] += "\n"
-    lines.append(f"{key}={value}\n")
+    lines.append(f"{key}={written}\n")
 
 with open(path, "w") as f:
     f.writelines(lines)
@@ -205,6 +220,7 @@ MODE="docker"
 case "${1:-}" in
   --native) MODE="native" ;;
   --admin) MODE="admin" ;;
+  --restore) MODE="restore" ;;
 esac
 
 echo "==> ChannelAgent start.sh (mode: $MODE)"
@@ -243,6 +259,13 @@ setup_venv() {
 if [ "$MODE" = "admin" ]; then
   setup_venv
   exec python3 -m app.admin.cli
+fi
+
+# --- Restore a backup: same venv, no llama-server, the application must be stopped ---
+if [ "$MODE" = "restore" ]; then
+  setup_venv
+  shift
+  exec python3 -m app.admin.restore "$@"
 fi
 
 # --- 2. Native llama-server: reuse it if running, start it if not (macOS only) ---

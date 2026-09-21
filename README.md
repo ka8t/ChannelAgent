@@ -117,6 +117,19 @@ to replace it (that would make every encrypted value unreadable), and it
 points to the rotation tool (`python -m app.admin.rekey`) instead. Setting it
 while it is empty accepts only a valid Fernet key.
 
+`--set` also checks the value itself, with the rules in `app/settings_rules.py`
+(ports 1 to 65535, hosts, URLs, whole numbers, the Telegram token and Matrix id
+shapes, the email tag and folder, the API key strength, the Fernet key format).
+A value the application would reject is refused with the reason and `.env` is
+left as it was, so a mistake shows when you type it, not at the next start.
+A value with a space or a special character (`& ; | < > ( ) $ ! # * ? { }`, a
+backtick, a double quote, `~`) is written between single quotes, so the shell,
+docker compose and the application all read exactly what you typed and nothing
+in it is executed: `./start.sh --set 'EMAIL_PASSWORD=pa ss&word'` writes
+`EMAIL_PASSWORD='pa ss&word'`. Two things cannot be written the same way for
+every reader and are refused: a single quote or a backslash, and `${`. Put such a
+value in `.env` by hand if you are sure of it.
+
 ## Start
 
 Start `llama-server` natively on the Mac first (see Prerequisites and
@@ -268,6 +281,30 @@ overrides it from `.env`'s `DATABASE_URL` at runtime (via
 `app.config.get_settings()`), the same setting the application itself
 uses, so a migration can never accidentally target a different
 database than the app runs against.
+
+## Restoring a backup
+
+Before a migration changes an existing database, and before a key rotation, a
+verified copy is kept in `data/backups/` (see "Database migrations"). To go
+back to one, **stop the application first** (`docker compose down`, or stop
+`./start.sh --native`), then:
+
+```bash
+./start.sh --restore --list             # the backups: date, size, kind, revision
+./start.sh --restore                    # list them, choose a number, type RESTORE
+./start.sh --restore FILE               # a file name in data/backups/ or a path
+./start.sh --restore FILE --yes         # without the RESTORE confirmation
+```
+
+It refuses while the application runs, for a corrupt or non-SQLite file, for a
+file that is not a ChannelAgent database, and for a schema this version does not
+know. It checks that the backup can be decrypted with the current
+`ENCRYPTION_KEY` and refuses otherwise (`--allow-unreadable` to go on; a backup
+made before a key rotation needs the old key back in `.env`). The current
+database is kept as `data/backups/<name>-before-restore-<time>.db` before the
+swap. Then start the application: it migrates an older backup by itself, with an
+automatic backup first. The conversation history (`data/checkpoints.db`) is a
+separate file and is **not** restored.
 
 ## Updating dependencies
 

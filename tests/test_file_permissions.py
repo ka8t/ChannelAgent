@@ -253,6 +253,8 @@ def test_startup_warns_once_about_a_loose_env_file_and_database(tmp_path):
 def sandbox(tmp_path):
     shutil.copy(REPO / "start.sh", tmp_path / "start.sh")
     shutil.copy(REPO / ".env.example", tmp_path / ".env.example")
+    (tmp_path / "app").mkdir()
+    shutil.copy(REPO / "app" / "settings_rules.py", tmp_path / "app" / "settings_rules.py")
     return tmp_path
 
 

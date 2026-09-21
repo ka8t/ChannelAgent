@@ -22,6 +22,8 @@ REPO = Path(__file__).resolve().parent.parent
 def sandbox(tmp_path):
     shutil.copy(REPO / "start.sh", tmp_path / "start.sh")
     shutil.copy(REPO / ".env.example", tmp_path / ".env.example")
+    (tmp_path / "app").mkdir()
+    shutil.copy(REPO / "app" / "settings_rules.py", tmp_path / "app" / "settings_rules.py")
     return tmp_path
 
 

@@ -17,6 +17,8 @@ REPO = Path(__file__).resolve().parent.parent
 def sandbox(tmp_path):
     shutil.copy(REPO / "start.sh", tmp_path / "start.sh")
     shutil.copy(REPO / ".env.example", tmp_path / ".env.example")
+    (tmp_path / "app").mkdir()
+    shutil.copy(REPO / "app" / "settings_rules.py", tmp_path / "app" / "settings_rules.py")
     return tmp_path
 
 
@@ -64,14 +66,18 @@ def test_show_config_creates_env_from_the_example_and_lists_every_variable(sandb
     ],
 )
 def test_show_config_never_prints_a_secret_in_full(sandbox, key):
-    secret = "SECRETVALUE-0123456789-abcdef"
-    if key == "ENCRYPTION_KEY":  # --set only accepts a valid Fernet key here (#74)
-        secret = "SECR" + "A" * 39 + "="
+    # Values that --set accepts for each variable (#74, #75).
+    secrets = {
+        "ENCRYPTION_KEY": "SECR" + "A" * 39 + "=",
+        "API_SERVER_KEY": "SECRk3Jf9Zq2Lm8Xw5Tn7Vb4Hd6Gs1Yc",
+        "TELEGRAM_BOT_TOKEN": "1234567890:ABCdefGhiJklMnoPqrStuVwxYz012345",
+    }
+    secret = secrets.get(key, "SECRETVALUE-0123456789-abcdef")
     (sandbox / ".env").write_text((sandbox / ".env.example").read_text())
     assert _run(sandbox, "--set", f"{key}={secret}").returncode == 0
     out = _run(sandbox, "--show-config").stdout
     assert secret not in out, f"{key} is printed in clear"
-    assert "SECR...(hidden)" in [
+    assert f"{secret[:4]}...(hidden)" in [
         w for line in out.splitlines() if key in line for w in line.split()
     ]
 
@@ -95,9 +101,9 @@ def test_set_updates_an_existing_key_and_keeps_everything_else(sandbox):
     assert changed == [(next(a for a in before if a.startswith("LLAMA_PORT=")), "LLAMA_PORT=8123")]
 
 
-def test_set_keeps_brackets_equals_signs_and_spaces_in_the_value(sandbox):
-    assert _run(sandbox, "--set", "EMAIL_TRIGGER_TAG=[agent] a=b c").returncode == 0
-    assert _env(sandbox)["EMAIL_TRIGGER_TAG"] == "[agent] a=b c"
+def test_set_keeps_brackets_and_equals_signs_in_the_value(sandbox):
+    assert _run(sandbox, "--set", "EMAIL_TRIGGER_TAG=[agent]a=b").returncode == 0
+    assert _env(sandbox)["EMAIL_TRIGGER_TAG"] == "[agent]a=b"
 
 
 def test_set_creates_env_when_it_is_missing(sandbox):

@@ -473,7 +473,79 @@ the command exits non-zero and points to the rotation tool
 (`python -m app.admin.rekey`), because a different key makes every encrypted
 value unreadable; with an empty key only a valid Fernet key (44 characters,
 url-safe base64 ending in `=`) is accepted. The key is never echoed. The
-value rules for the other variables are tracked in #75.
+value rules for the other variables are described just below.
+
+### start.sh --set value rules (#75)
+
+`--set` refuses a value the application would reject, before anything is
+written. The rules are one module, `app/settings_rules.py`, with one rule per
+variable of `.env.example` (a test fails when a variable has none): port
+(1 to 65535), whole numbers, host or IP address, http(s) URL, the
+`sqlite+aiosqlite://` database URL (the only driver installed), the Telegram
+token and allowed-user list shapes, the Matrix id, the API key strength, the
+Fernet key format, and the email tag and folder rules, which are the
+adapter's own (a test compares the two). Variables that cannot be empty
+(ports, the trigger tag, the addresses) refuse an empty value; the others
+accept it. The module uses the standard library only, because `start.sh` runs
+it with the system `python3` before any virtualenv exists, and the application
+imports the API key rule from it (`app.api.deps.api_key_is_acceptable` is the
+same function), so `--set` and the API start-up check can never disagree. A
+message states the reason and never contains the value. If the module cannot
+be run, nothing is written.
+
+See "Quoting of values (#80)" below for how a value is written.
+
+### Quoting of values (#80)
+
+`.env` has four readers that must agree on every line: the shell (`source
+.env` in `start.sh`), docker compose (`env_file` and `${...}` interpolation),
+python-dotenv (the application, through pydantic-settings) and `start.sh
+--show-config`. `--set` used to write `KEY=VALUE` unquoted, so a value with `&`,
+`;` or a space was cut, or its tail was executed by `source` (measured with
+`ab&touch marker`: the marker file was created), while the application read
+another string.
+
+`app.settings_rules.format_value` decides the text written after `KEY=`: a
+value made only of letters, digits and `_ . / : @ + , = % ^ [ ] -` is written
+as it is (so ports, hosts, URLs and keys never change); any other value is
+written between single quotes, where the shell and compose take it literally
+and python-dotenv too. Refused, because the readers would disagree: a single
+quote, a backslash (python-dotenv interprets it inside quotes), `${`
+(python-dotenv would expand it), and control characters. The `~` is quoted so
+the shell does not expand it to the home directory. `--show-config` and the
+`ENCRYPTION_KEY` guard of `--set` strip one pair of quotes, so a line quoted by
+hand is understood too. Tested against bash, python-dotenv, the application's
+`Settings` and `docker compose config` (which prints a literal `$` as `$$`, only
+in its output).
+
+### Restoring a backup (#76)
+
+`./start.sh --restore` (`app/admin/restore.py`, run in the virtualenv like the
+console) replaces the database with one of the copies kept in `backups/`.
+Order of what it does, and where it stops without changing anything:
+1. Refuses if the application is running: the Admin API answers on its port,
+   the database is locked by another process, or a `channelagent` container is
+   up.
+2. Checks the chosen file: it opens as SQLite and passes `PRAGMA
+   integrity_check`, it has the ChannelAgent tables, and its alembic revision
+   is one this code knows (a newer schema is refused; an older one is accepted,
+   and the next start migrates it after an automatic backup).
+3. Counts the encrypted values that the current `ENCRYPTION_KEY` cannot decrypt
+   (the count of #55, per column) and refuses when there are some, unless
+   `--allow-unreadable`. A `prerekey` backup is in that case until the old key is
+   put back.
+4. Shows the row counts of the current database against the backup and asks for
+   the word `RESTORE` (unless `--yes`).
+5. Only then: copies the current database to `<name>-before-restore-<time>.db`
+   (verified, mode 600, never deleted by the migration pruning), copies the
+   backup to `<db>.restoring` (mode 600), checks that copy (integrity and row
+   counts equal to the backup's), removes the old `-wal`, `-shm` and `-journal`
+   files (they would be replayed onto the new file), and swaps the file in with
+   an atomic rename.
+
+The conversation checkpoints are a separate database and are not restored; the
+output says so. The console has no restore menu on purpose: a restore needs the
+application stopped, and the console starts the database.
 
 ### Dependency lock (#69)
 
@@ -606,7 +678,7 @@ opens, `integrity_check` is `ok`, every table has the same number of rows). If
 it cannot be made or does not check out, **the migration does not run** and the
 start fails. Nothing is done for a file that is already at head, a file that
 does not exist yet, or a non-SQLite database. The last `MIGRATION_BACKUPS_KEEP`
-copies are kept (5 by default, 0 turns it off). The conversation checkpoint
+copies are kept (5 by default, 0 turns it off), the newest ones by the UTC stamp in the file name (#81): the alembic revision in front of it plays no part, and a file without a stamp, a `prerekey` copy or a `before-restore` copy is never deleted. The conversation checkpoint
 file is not migrated by Alembic, so it is not copied.
 
 To go back: stop the application, then copy the wanted file from `backups/`

@@ -15,6 +15,7 @@ Restore: stop the application, then copy the wanted file from
 
 import logging
 import os
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -71,12 +72,29 @@ def _verify(source: Path, target: Path) -> None:
         dst.close()
 
 
+_STAMP = re.compile(r"-(\d{8}T\d{12}Z)\.db$")
+# Copies that are the way back from a deliberate operation: never rotated.
+_NEVER_PRUNED = ("-prerekey-", "-before-restore-")
+
+
 def _prune(directory: Path, stem: str, keep: int) -> None:
-    """Only migration backups are rotated: a "prerekey" copy is the way back
-    from a key rotation and is never deleted automatically.
+    """Keep the `keep` newest migration backups and delete the older ones (#81).
+
+    Newest is decided by the UTC stamp at the end of the file name, not by the
+    whole name: the alembic revision sits in front of it and sorts like a random
+    string. A file without a stamp is never touched, and neither is a
+    "prerekey" copy (the way back from a key rotation) or a "before-restore"
+    copy (the way back from a restore).
     """
-    candidates = [p for p in directory.glob(f"{stem}-*.db") if "-prerekey-" not in p.name]
-    for old in sorted(candidates)[:-keep]:
+    dated = []
+    for path in directory.glob(f"{stem}-*.db"):
+        if any(tag in path.name for tag in _NEVER_PRUNED):
+            continue
+        match = _STAMP.search(path.name)
+        if match:
+            dated.append((match.group(1), path.name, path))
+    dated.sort()
+    for _stamp, _name, old in dated[:-keep] if keep > 0 else []:
         old.unlink()
         logger.info("Removed the old migration backup %s", old.name)
 
