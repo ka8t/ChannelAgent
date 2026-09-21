@@ -61,6 +61,9 @@ VALID = {
     "API_SERVER_PORT": "8700",
     "API_SERVER_HOST": "127.0.0.1",
     "API_BIND_ADDRESS": "0.0.0.0",
+    "ALLOWED_HOSTS": "localhost,127.0.0.1,::1",
+    "API_MAX_BODY_BYTES": "1048576",
+    "API_REQUEST_TIMEOUT_SECONDS": "60",
     "API_SERVER_KEY": HEX_KEY,
 }
 
@@ -106,6 +109,9 @@ INVALID = MEASURED + [
     ("EMAIL_AGENT_FOLDER", "bôîte"),
     ("EMAIL_TRIGGER_TAG", "é"),
     ("EMAIL_TRIGGER_TAG", ""),
+    ("API_MAX_BODY_BYTES", "0"),
+    ("API_MAX_BODY_BYTES", ""),
+    ("API_REQUEST_TIMEOUT_SECONDS", "-5"),
     ("API_SERVER_KEY", "a" * 40),
     ("API_SERVER_KEY", "changeme-changeme-changeme"),
     ("ENCRYPTION_KEY", "x" * 44),

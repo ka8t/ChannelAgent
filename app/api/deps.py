@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.scopes import Principal, Scope
 from app.config import get_settings
 from app.db.session import get_sessionmaker
 
@@ -96,3 +97,5 @@ async def verify_api_key(
         _record_failure(address, now)
         logger.warning("Admin API: failed authentication from %s.", address)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing API key")
+    # One shared key, no named administrators yet (deferred): the key holder is the owner.
+    request.state.principal = Principal(actor="api", scope=Scope.OWNER)

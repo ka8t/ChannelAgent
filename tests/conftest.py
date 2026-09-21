@@ -13,6 +13,8 @@ before any test module imports app.* code.
 import os
 
 os.environ.setdefault("ENCRYPTION_KEY", "PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=")
+# The API answers only to its own names (#108); the tests reach it as "t" and "testserver".
+os.environ.setdefault("ALLOWED_HOSTS", "t,testserver,localhost,127.0.0.1")
 
 import pytest
 

@@ -31,6 +31,7 @@ from app.api.schemas import (
     UserOut,
     UserUpdate,
 )
+from app.api.scopes import Scope, require
 from app.db.models import (
     ActionLog,
     ActionStatus,
@@ -52,7 +53,12 @@ API_ACTOR = "api"
 # --- Users ---
 
 
-@router.post("/users", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/users",
+    dependencies=[require(Scope.OPERATE)],
+    response_model=UserOut,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_user(
     body: UserCreate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
@@ -61,17 +67,17 @@ async def create_user(
     return user
 
 
-@router.get("/users", response_model=list[UserOut])
+@router.get("/users", dependencies=[require(Scope.READ)], response_model=list[UserOut])
 async def list_users(session: AsyncSession = Depends(get_db_session)) -> list[User]:
     return await service.list_users(session)
 
 
-@router.get("/users/{user_id}", response_model=UserOut)
+@router.get("/users/{user_id}", dependencies=[require(Scope.READ)], response_model=UserOut)
 async def get_user(user_id: int, session: AsyncSession = Depends(get_db_session)) -> User:
     return await service.get_user(session, user_id)
 
 
-@router.patch("/users/{user_id}", response_model=UserOut)
+@router.patch("/users/{user_id}", dependencies=[require(Scope.OPERATE)], response_model=UserOut)
 async def update_user(
     user_id: int, body: UserUpdate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
@@ -86,7 +92,11 @@ async def update_user(
     return user
 
 
-@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/users/{user_id}",
+    dependencies=[require(Scope.OWNER)],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def delete_user(
     user_id: int,
     purge: bool = Query(
@@ -102,7 +112,7 @@ async def delete_user(
 
 
 @router.post(
-    "/users/{user_id}/channels",
+    "/users/{user_id}/channels", dependencies=[require(Scope.OPERATE)],
     response_model=ChannelIdentityOut,
     status_code=status.HTTP_201_CREATED,
 )
@@ -116,7 +126,11 @@ async def add_channel_identity(
     return identity
 
 
-@router.get("/users/{user_id}/channels", response_model=list[ChannelIdentityOut])
+@router.get(
+    "/users/{user_id}/channels",
+    dependencies=[require(Scope.READ)],
+    response_model=list[ChannelIdentityOut],
+)
 async def list_channel_identities(
     user_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> list[ChannelIdentity]:
@@ -124,7 +138,9 @@ async def list_channel_identities(
 
 
 @router.delete(
-    "/users/{user_id}/channels/{channel_identity_id}", status_code=status.HTTP_204_NO_CONTENT
+    "/users/{user_id}/channels/{channel_identity_id}",
+    dependencies=[require(Scope.OPERATE)],
+    status_code=status.HTTP_204_NO_CONTENT,
 )
 async def delete_channel_identity(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
@@ -136,7 +152,9 @@ async def delete_channel_identity(
 
 
 @router.put(
-    "/users/{user_id}/channels/{channel_identity_id}/agent", response_model=ChannelIdentityOut
+    "/users/{user_id}/channels/{channel_identity_id}/agent",
+    dependencies=[require(Scope.OPERATE)],
+    response_model=ChannelIdentityOut,
 )
 async def set_identity_agent(
     user_id: int,
@@ -155,7 +173,11 @@ async def set_identity_agent(
 # --- Conversations (#63) ---
 
 
-@router.post("/users/{user_id}/conversations/reset", response_model=ConversationResetOut)
+@router.post(
+    "/users/{user_id}/conversations/reset",
+    dependencies=[require(Scope.OPERATE)],
+    response_model=ConversationResetOut,
+)
 async def reset_conversation(
     user_id: int,
     agent_id: int | None = Query(
@@ -176,6 +198,7 @@ async def reset_conversation(
 
 @router.post(
     "/users/{user_id}/channels/{channel_identity_id}/permissions",
+    dependencies=[require(Scope.ADMIN)],
     response_model=PermissionOut,
     status_code=status.HTTP_201_CREATED,
 )
@@ -194,6 +217,7 @@ async def grant(
 
 @router.get(
     "/users/{user_id}/channels/{channel_identity_id}/permissions",
+    dependencies=[require(Scope.READ)],
     response_model=list[PermissionOut],
 )
 async def list_permissions(
@@ -205,6 +229,7 @@ async def list_permissions(
 
 @router.delete(
     "/users/{user_id}/channels/{channel_identity_id}/permissions/{kind}",
+    dependencies=[require(Scope.ADMIN)],
     status_code=status.HTTP_204_NO_CONTENT,
 )
 async def revoke(
@@ -222,7 +247,7 @@ async def revoke(
 # --- Access requests (#36) ---
 
 
-@router.get("/requests", response_model=list[AccessRequestOut])
+@router.get("/requests", dependencies=[require(Scope.READ)], response_model=list[AccessRequestOut])
 async def list_requests(
     status_filter: str = Query(
         default="pending", alias="status", pattern="^(pending|approved|denied|all)$"
@@ -233,14 +258,22 @@ async def list_requests(
     return await service.list_requests(session, wanted)
 
 
-@router.post("/requests/{request_id}/approve", response_model=UserOut)
+@router.post(
+    "/requests/{request_id}/approve",
+    dependencies=[require(Scope.OPERATE)],
+    response_model=UserOut,
+)
 async def approve_request(request_id: int, session: AsyncSession = Depends(get_db_session)) -> User:
     user = await service.approve_request(session, request_id, resolved_by=API_ACTOR)
     await session.commit()
     return user
 
 
-@router.post("/requests/{request_id}/deny", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/requests/{request_id}/deny",
+    dependencies=[require(Scope.OPERATE)],
+    status_code=status.HTTP_204_NO_CONTENT,
+)
 async def deny_request(request_id: int, session: AsyncSession = Depends(get_db_session)) -> None:
     await service.deny_request(session, request_id, resolved_by=API_ACTOR)
     await session.commit()
@@ -249,13 +282,20 @@ async def deny_request(request_id: int, session: AsyncSession = Depends(get_db_s
 # --- Agents (#37): an admin can edit any user's agent ---
 
 
-@router.get("/users/{user_id}/agents", response_model=list[AgentOut])
+@router.get(
+    "/users/{user_id}/agents",
+    dependencies=[require(Scope.READ)],
+    response_model=list[AgentOut],
+)
 async def list_agents(user_id: int, session: AsyncSession = Depends(get_db_session)) -> list[Agent]:
     return await service.list_agents(session, user_id)
 
 
 @router.post(
-    "/users/{user_id}/agents", response_model=AgentOut, status_code=status.HTTP_201_CREATED
+    "/users/{user_id}/agents",
+    dependencies=[require(Scope.OPERATE)],
+    response_model=AgentOut,
+    status_code=status.HTTP_201_CREATED,
 )
 async def create_agent(
     user_id: int, body: AgentCreate, session: AsyncSession = Depends(get_db_session)
@@ -265,12 +305,12 @@ async def create_agent(
     return agent
 
 
-@router.get("/agents/{agent_id}", response_model=AgentOut)
+@router.get("/agents/{agent_id}", dependencies=[require(Scope.READ)], response_model=AgentOut)
 async def get_agent(agent_id: int, session: AsyncSession = Depends(get_db_session)) -> Agent:
     return await service.get_agent(session, agent_id)
 
 
-@router.patch("/agents/{agent_id}", response_model=AgentOut)
+@router.patch("/agents/{agent_id}", dependencies=[require(Scope.OPERATE)], response_model=AgentOut)
 async def update_agent(
     agent_id: int, body: AgentUpdate, session: AsyncSession = Depends(get_db_session)
 ) -> Agent:
@@ -289,7 +329,7 @@ async def update_agent(
 # --- Audit trail search (#39) ---
 
 
-@router.get("/logs", response_model=list[ActionLogOut])
+@router.get("/logs", dependencies=[require(Scope.ADMIN)], response_model=list[ActionLogOut])
 async def search_logs(
     user_id: int | None = None,
     agent_id: int | None = None,
@@ -324,7 +364,11 @@ async def search_logs(
 # --- What administrators did (#59) ---
 
 
-@router.get("/admin-events", response_model=list[AdminEventOut])
+@router.get(
+    "/admin-events",
+    dependencies=[require(Scope.ADMIN)],
+    response_model=list[AdminEventOut],
+)
 async def search_admin_events(
     actor: str | None = None,
     action: str | None = None,
@@ -355,7 +399,7 @@ async def search_admin_events(
 # --- Storage overview (#40) ---
 
 
-@router.get("/storage", response_model=StorageOut)
+@router.get("/storage", dependencies=[require(Scope.READ)], response_model=StorageOut)
 async def storage(session: AsyncSession = Depends(get_db_session)) -> StorageOut:
     overview = await service.storage_overview(session)
     return StorageOut(

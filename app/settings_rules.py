@@ -185,6 +185,9 @@ RULES: dict[str, str] = {
     "API_SERVER_HOST": "host",
     "API_BIND_ADDRESS": "ip",
     "API_SERVER_KEY": "api_key",
+    "ALLOWED_HOSTS": "free",
+    "API_MAX_BODY_BYTES": "posint",
+    "API_REQUEST_TIMEOUT_SECONDS": "posint",
 }
 
 # Variables that cannot be empty: they have a default and an empty value would
@@ -204,6 +207,8 @@ REQUIRED = frozenset(
         "API_SERVER_PORT",
         "API_SERVER_HOST",
         "API_BIND_ADDRESS",
+        "API_MAX_BODY_BYTES",
+        "API_REQUEST_TIMEOUT_SECONDS",
     }
 )
 

@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     # exposure is decided by docker-compose's published address instead.
     api_server_host: str = Field(default="127.0.0.1", alias="API_SERVER_HOST")
     api_server_key: str | None = Field(default=None, alias="API_SERVER_KEY")
+    # Names the API answers to (#108): a request with another Host is refused (421),
+    # which stops DNS rebinding from a web page. Add the name of a TLS proxy here.
+    # Empty means the loopback names.
+    allowed_hosts: str = Field(default="localhost,127.0.0.1,::1", alias="ALLOWED_HOSTS")
+    # A request body larger than this is refused (413), a request slower than this
+    # is cut (504) (#108).
+    api_max_body_bytes: int = Field(default=1_048_576, alias="API_MAX_BODY_BYTES")
+    api_request_timeout_seconds: int = Field(default=60, alias="API_REQUEST_TIMEOUT_SECONDS")
 
 
 @lru_cache

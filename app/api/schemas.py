@@ -15,10 +15,12 @@ from app.db.models import ActionStatus, Channel, Direction, PermissionKind, Requ
 
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     display_name: str | None = None
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     display_name: str | None = None
     is_active: bool | None = None
 
@@ -31,6 +33,7 @@ class UserOut(BaseModel):
 
 
 class ChannelIdentityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     channel: Channel
     # Raw as an admin would naturally provide it: a Telegram numeric id,
     # a Matrix user id, or — for channel="email" — the actual address.
@@ -49,12 +52,14 @@ class ChannelIdentityOut(BaseModel):
 
 
 class IdentityAgentSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """`agent_id: null` goes back to the user's default agent."""
 
     agent_id: int | None
 
 
 class PermissionGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     kind: PermissionKind
 
 
@@ -113,10 +118,12 @@ class StorageOut(BaseModel):
 
 
 class AgentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
 
 
 class AgentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     """Only the fields that are given change."""
 
     name: str | None = None

@@ -12,6 +12,9 @@ Disabled here (docs_url=None etc.) and re-implemented below as normal
 routes, which the app-level dependency does cover.
 """
 
+import logging
+import uuid
+
 from fastapi import Depends, FastAPI, Request
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -19,7 +22,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.admin import service
 from app.api.deps import verify_api_key
+from app.api.protect import ProtectMiddleware
 from app.api.routes import router
+from app.api.scopes import Scope, require, verify_scopes
 
 app = FastAPI(
     title="ChannelAgent Admin API",
@@ -29,6 +34,9 @@ app = FastAPI(
     openapi_url=None,
 )
 app.include_router(router)
+app.add_middleware(ProtectMiddleware)
+
+logger = logging.getLogger("channelagent.api")
 
 
 def _error(status_code: int):
@@ -44,11 +52,28 @@ app.add_exception_handler(service.ConflictError, _error(409))
 app.add_exception_handler(service.InvalidInputError, _error(422))
 
 
-@app.get("/openapi.json")
+@app.get("/openapi.json", dependencies=[require(Scope.READ)])
 async def openapi_json() -> dict:
     return get_openapi(title=app.title, version=app.version, routes=app.routes)
 
 
-@app.get("/docs")
+@app.get("/docs", dependencies=[require(Scope.READ)])
 async def docs() -> HTMLResponse:
     return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Docs")
+
+
+async def _internal_error(_request: Request, exc: Exception) -> JSONResponse:
+    """A short stable message and an id, never the exception text: it can hold a
+    path, a query or a value. The details go to the log (redacted) under the id (#108).
+    """
+    error_id = uuid.uuid4().hex[:12]
+    logger.error("Admin API internal error %s", error_id, exc_info=exc)
+    return JSONResponse(
+        status_code=500, content={"detail": "Internal server error", "error_id": error_id}
+    )
+
+
+app.add_exception_handler(Exception, _internal_error)
+
+# Default deny: the application does not start with a route that declares no scope (#108).
+verify_scopes(app)
