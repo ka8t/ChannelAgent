@@ -23,7 +23,7 @@ real code for good.
 | `mutation_check.py SPEC` | Generic runner: applies each mutation of a spec, runs its tests, restores the files, lists survivors. |
 | `mutations/spec_issue_*.py` | Specs for the runner (#60, #65, #70, #85). |
 | `mutations/issue_*.py` | Earlier self-contained mutation scripts, one per issue (#47 to #84); run them directly. |
-| `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78); see `rehearsals/README.md`. |
+| `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78, #91); see `rehearsals/README.md`. |
 | `tools/verify_closed_issues.py` | Fresh end-to-end check of closed issues on a throwaway database and a mock model. |
 | `tools/run_test_groups.py` | Runs the targeted test files of each issue and prints the last pytest line. |
 | `tools/mock_llm_counting.py`, `tools/run_turns.py` | A mock model that answers with the number of messages it received, and a client that runs N turns (used to show a conversation surviving a restart). |

@@ -232,11 +232,10 @@ Learned the hard way, none of it derivable from the code. Context in
 
 - Never write a cause, a count or "verified" that was not measured on the current
   tree; say "cause not established"; correct a wrong comment at once.
-- Every script used is kept in `scripts/dev/` (index in its README); look there
-  first. Explain "mutation" and other jargon in plain words.
-- No round trips: finish, verify, record, and create an issue for every open
-  point in the same turn. Test the fresh state, not only the existing one.
-- Verify before cleaning up; use `.venv/bin/python`; low-entropy test values.
+- Scripts used are kept in `scripts/dev/`; look there first. Explain jargon plainly.
+- No round trips: finish, verify, record. An issue only for a real defect or a
+  blocking owner decision; accepted limits stay in the status comment.
+- Test the fresh state too; verify before cleanup; `.venv/bin/python`.
 
 ## Where things are
 

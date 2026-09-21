@@ -374,10 +374,16 @@ from the machine's LAN address 192.168.1.77:
 | the API port `:8794` on the LAN address | connection refused (curl exit 7) |
 | control, `TLS_BIND_ADDRESS=0.0.0.0`: LAN HTTPS no key / right key | `401` / `200` (the check does detect an exposed proxy) |
 
+**SSH tunnel, tested (#91)** with `scripts/dev/rehearsals/ssh_tunnel.sh`: a
+throwaway `sshd` container stands for the host and the application shares its
+network namespace, so `127.0.0.1:<API port>` inside the host is the API. With
+`ssh -L <local port>:127.0.0.1:<API port> <host>` open: no key `401`, wrong key
+`401`, right key `200`; the API port on the Mac itself: refused (`000`); after
+the tunnel is closed: `000`.
+
 Not tested: a public name with an automatic certificate (`tls internal`
-replaced by Caddy's default, ports 80 and 443 published), and the SSH tunnel
-command (no SSH server runs on the development Mac). Both are recipes on
-paper until run on a host that has them.
+replaced by Caddy's default, ports 80 and 443 published), which needs a real
+DNS name and a reachable host.
 
 Verified on 2026-09-20, from the loopback address and from the machine's
 own LAN address: default Docker publishing answers `401` (no key) and
