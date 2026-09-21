@@ -7,6 +7,7 @@ import asyncio
 import enum
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -163,6 +164,97 @@ def _clean_agent_name(name: str) -> str:
     return name
 
 
+# --- per-agent configuration (#110) ---
+
+MEMORY_MODES = ("off", "ondemand", "always", "search")
+MAX_SYSTEM_PROMPT_LENGTH = 20000
+MAX_TOOLS = 100
+_MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}")
+_TOOL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}")
+CONFIG_FIELDS = ("system_prompt", "model", "memory_mode", "tools")
+
+
+def _clean_system_prompt(value) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or "\x00" in value:
+        raise InvalidInputError("A system prompt is text")
+    value = value.strip()
+    if len(value) > MAX_SYSTEM_PROMPT_LENGTH:
+        raise InvalidInputError(f"A system prompt is at most {MAX_SYSTEM_PROMPT_LENGTH} characters")
+    return value or None
+
+
+def _clean_model(value) -> str | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str) or not _MODEL_NAME.fullmatch(value.strip()):
+        raise InvalidInputError(
+            "A model name is letters, digits and . _ : / -, up to 200 characters"
+        )
+    return value.strip()
+
+
+def _clean_memory_mode(value) -> str:
+    if value not in MEMORY_MODES:
+        raise InvalidInputError(f"memory_mode is one of: {', '.join(MEMORY_MODES)}")
+    return value
+
+
+def _clean_tools(value) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_TOOLS:
+        raise InvalidInputError(f"tools is a list of at most {MAX_TOOLS} tool names")
+    seen: list[str] = []
+    for item in value:
+        if not isinstance(item, str) or not _TOOL_NAME.fullmatch(item):
+            raise InvalidInputError(
+                "A tool name is letters, digits and . _ : -, up to 200 characters"
+            )
+        if item not in seen:
+            seen.append(item)
+    return seen
+
+
+_CLEANERS = {
+    "system_prompt": _clean_system_prompt,
+    "model": _clean_model,
+    "memory_mode": _clean_memory_mode,
+    "tools": _clean_tools,
+}
+
+
+def _clean_config(fields: dict) -> dict:
+    unknown = set(fields) - set(CONFIG_FIELDS)
+    if unknown:
+        raise InvalidInputError(f"Unknown agent settings: {', '.join(sorted(unknown))}")
+    return {name: _CLEANERS[name](value) for name, value in fields.items()}
+
+
+async def configure_agent(
+    session: AsyncSession, agent_id: int, fields: dict, *, actor: str = DEFAULT_ACTOR
+) -> Agent:
+    """Set the given settings of an agent, any user's (#110). A setting that is not in `fields`
+    is left alone. The event records which settings changed, never the prompt itself."""
+    agent = await get_agent(session, agent_id)
+    cleaned = _clean_config(fields)
+    for name, value in cleaned.items():
+        setattr(agent, name, value)
+    await session.flush()
+    details: dict = {"fields": sorted(cleaned)}
+    for name in ("model", "memory_mode", "tools"):
+        if name in cleaned:
+            details[name] = cleaned[name]
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="agent.configure",
+        target_type="agent",
+        target_id=agent.id,
+        details=details,
+    )
+    return agent
+
+
 async def _agent_named(session: AsyncSession, user_id: int, name: str) -> Agent | None:
     stmt = select(Agent).where(Agent.user_id == user_id, Agent.name == name)
     return (await session.execute(stmt)).scalar_one_or_none()
@@ -176,13 +268,20 @@ async def get_agent(session: AsyncSession, agent_id: int) -> Agent:
 
 
 async def create_agent(
-    session: AsyncSession, user_id: int, name: str, *, actor: str = DEFAULT_ACTOR
+    session: AsyncSession,
+    user_id: int,
+    name: str,
+    *,
+    actor: str = DEFAULT_ACTOR,
+    settings: dict | None = None,
 ) -> Agent:
+    """`settings` may hold any of system_prompt, model, memory_mode and tools (#110)."""
     await _require_user(session, user_id)
     name = _clean_agent_name(name)
     if await _agent_named(session, user_id, name) is not None:
         raise AgentNameTakenError(f"User {user_id} already has an agent named {name!r}")
-    agent = Agent(user_id=user_id, name=name)
+    cleaned = _clean_config(settings or {})
+    agent = Agent(user_id=user_id, name=name, **cleaned)
     session.add(agent)
     await session.flush()
     await record_admin_event(
@@ -191,7 +290,11 @@ async def create_agent(
         action="agent.create",
         target_type="agent",
         target_id=agent.id,
-        details={"name": name, "owner_user_id": user_id},
+        details={
+            "name": name,
+            "owner_user_id": user_id,
+            **({"fields": sorted(cleaned)} if cleaned else {}),
+        },
     )
     return agent
 
@@ -1055,6 +1158,7 @@ _ENCRYPTED_COLUMNS = (
     ("access_requests", "first_message_text"),
     ("channel_identities", "raw_address"),
     ("admin_events", "details"),
+    ("agents", "system_prompt"),
 )
 
 

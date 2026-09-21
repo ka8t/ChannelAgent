@@ -190,8 +190,8 @@ Facts, refreshed when they change; the issues have the detail.
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
   adapters are live; Matrix (#29) was abandoned and the dedicated bot mailbox (#42)
   dropped, the `[agent]` tag on the shared mailbox stays (owner, 2026-09-21).
-- Last full test suite: 1087 passed, 0 failed (133 s), `ruff check .` clean
-  (2026-09-21, working tree with #103 and #108, not committed yet).
+- Last full test suite: 1281 passed, 0 failed (185 s), `ruff check .` clean
+  (2026-09-21, working tree with #110 on top of `6123616`, not committed yet).
   Targeted runs while working; the full suite once per batch, before a commit
   (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).
@@ -202,6 +202,10 @@ Facts, refreshed when they change; the issues have the detail.
   `.env.pre-rekey` and the prerekey copies once the new key is stored). Everything
   else is implemented, pushed and closed. Matrix (#29) was abandoned, the dedicated
   mailbox (#42) dropped.
+- Work in progress: epics #106 (admin API and UI) and #107 (MCP), plan in
+  `docs/COMPARISON_AJEAN.md`, working order of P1 in the #106 comment. Done and pushed: #103,
+  #108, #133, #109 (partly), #104 with #134 to #138. In the working tree: #110. Next: #105, then
+  #115 to #117, #114, #113, #111, #112. History of the session: `docs/HISTORY.md`.
 - The owner's live container `channelagent-channelagent-1` (127.0.0.1:8700)
   runs the real app on the real `data/` and polls the real Telegram bot. Never
   start a second instance with the same token, never restart it uninvited.
@@ -214,6 +218,9 @@ Facts, refreshed when they change; the issues have the detail.
 Learned the hard way, none of it derivable from the code. Context in
 `docs/HISTORY.md`.
 
+- **zsh and macOS traps**: a loop variable named `path` overwrites `PATH` in zsh (use another
+  name); `ps eww` shows no environment on this macOS, so measure a child's environment by making
+  the child print it (`env`); `PIPESTATUS` is `pipestatus` (1-based) in zsh.
 - **RTK hook** (global): rewrites `sed -i` (breaks on macOS) and summarises
   `grep` and `docker logs` output. Edit and mutate files with Python; use
   `rtk proxy <cmd>` for raw output. `git status --short | grep -c .` counts

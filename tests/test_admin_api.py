@@ -312,6 +312,11 @@ async def test_agent_lifecycle_and_admin_edits_any_users_agent(api):
         "user_id": alice,
         "name": "work",
         "is_active": True,
+        "system_prompt": None,
+        "has_system_prompt": False,
+        "model": None,
+        "memory_mode": "off",
+        "tools": [],
     }
     await api.post(
         f"/users/{bob}/agents", json={"name": "work"}, headers=AUTH
@@ -325,7 +330,17 @@ async def test_agent_lifecycle_and_admin_edits_any_users_agent(api):
     r = await api.patch("/agents/2", json={"is_active": False}, headers=AUTH)
     assert r.json()["is_active"] is False and r.json()["name"] == "renamed"
     r = await api.patch("/agents/2", json={"name": "again", "is_active": True}, headers=AUTH)
-    assert r.json() == {"id": 2, "user_id": bob, "name": "again", "is_active": True}
+    assert r.json() == {
+        "id": 2,
+        "user_id": bob,
+        "name": "again",
+        "is_active": True,
+        "system_prompt": None,
+        "has_system_prompt": False,
+        "model": None,
+        "memory_mode": "off",
+        "tools": [],
+    }
     assert (await api.get("/agents/2", headers=AUTH)).json()["name"] == "again"
     assert _sql("select name, is_active from agents order by id") == [("work", 1), ("again", 1)]
 

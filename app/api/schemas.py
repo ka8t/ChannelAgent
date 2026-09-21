@@ -8,6 +8,7 @@ itself.
 """
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -117,9 +118,17 @@ class StorageOut(BaseModel):
     checkpoint_row_counts: dict[str, int] = {}
 
 
+MemoryMode = Literal["off", "ondemand", "always", "search"]
+
+
 class AgentCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
+    # The per-agent configuration (#110); only what is given is set, the rest keeps its default.
+    system_prompt: str | None = Field(default=None, max_length=20000)
+    model: str | None = Field(default=None, max_length=200)
+    memory_mode: MemoryMode = "off"
+    tools: list[str] = Field(default_factory=list, max_length=100)
 
 
 class AgentUpdate(BaseModel):
@@ -128,15 +137,27 @@ class AgentUpdate(BaseModel):
 
     name: str | None = None
     is_active: bool | None = None
+    # `null` clears the prompt and the model; leave a setting out to keep it (#110).
+    system_prompt: str | None = Field(default=None, max_length=20000)
+    model: str | None = Field(default=None, max_length=200)
+    memory_mode: MemoryMode | None = None
+    tools: list[str] | None = Field(default=None, max_length=100)
 
 
 class AgentOut(BaseModel):
+    """The system prompt is only returned to an administrator: everyone else sees
+    `has_system_prompt`. The other settings are names and switches."""
+
     model_config = ConfigDict(from_attributes=True)
     id: int
     user_id: int
     name: str
     is_active: bool
-
+    system_prompt: str | None = None
+    has_system_prompt: bool = False
+    model: str | None = None
+    memory_mode: str = "off"
+    tools: list[str] = []
 
 class AccessRequestOut(BaseModel):
     """`first_message_text` is the decrypted first message of the unknown

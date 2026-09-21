@@ -387,6 +387,20 @@ bash: they act on processes and containers and must work when no API can, which 
 The engine started by `start.sh` gets a cleared environment (`env -i`, only `PATH`, `HOME`,
 `TMPDIR`, `LANG`), so it does not inherit the secrets of `.env`.
 
+**Agent configuration (#110).** An agent has four settings besides its name: `system_prompt`
+(encrypted at rest like the other free text, registered in `app/admin/rekey.py` and
+`app/admin/service.py`, and returned to an administrator only, others get `has_system_prompt`),
+`model` (null = the engine's default, sent as the request's `model` field when set),
+`memory_mode` (`off`, `ondemand`, `always`, `search`; stored now, used by the memory feature) and
+`tools` (an allow-list of tool names; stored now, used by the tool loop). They are set when the agent
+is created (`POST /users/{id}/agents`) or with `PATCH /agents/{id}`, where only the fields given change
+and a null prompt or model clears it, and every change is an admin event that names the settings
+changed and never the prompt. A turn reads them from the database, so a change applies from the next
+message. The prompt is handed to the graph through a context variable, not `configurable`, because
+LangGraph copies `configurable` values into the checkpoint's metadata; it and the running summary
+(#86) form one system message in front of the history window, and its tokens are taken out of the
+window's budget.
+
 **Models (#104).** The models are the `.gguf` files of `MODELS_DIR` (`./models`, git-ignored),
 each with an optional `<name>.gguf.sha256`. `GET /models` lists them with size, recorded SHA256, and
 whether the engine has loaded them (`/props`) or `MODEL_FILE` names them; `DELETE /models/{name}`

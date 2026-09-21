@@ -54,6 +54,14 @@ class _Server(BaseHTTPRequestHandler):
         return self._send(200, {"choices": [{"message": {"content": "r" * 150}}]})
 
 
+@pytest.fixture(autouse=True)
+async def _database(fresh_db):
+    """A turn reads its agent's settings from the database (#110): a throwaway one."""
+    from app.db.session import init_db
+
+    await init_db()
+
+
 @pytest.fixture
 def server(monkeypatch):
     _Server.chat, _Server.tokenize_calls = [], 0

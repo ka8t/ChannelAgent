@@ -944,3 +944,50 @@ dependency lock (`requirements.in` -> `requirements.txt`, resolved in
   phase 0 items of #72, real live checks (#61).
 - Tooling: the RTK hook rewrites `sed -i` and breaks it on macOS, and
   `grep` output is summarised: use Python for edits and mutations.
+
+## Session of 2026-09-21 (evening): independence, plan, admin API, models, agent settings
+
+**Direction set by the owner.** An independent, 100% local, multi-user agent (no path, model or
+reference outside the repository), extensible through MCP servers (mandatory), administered through
+one secure API of which `start.sh` (full command line) and a friendly admin UI are the two clients.
+Plan and comparison with another local agent project: `docs/COMPARISON_AJEAN.md`; designs:
+`docs/API_SECURITY.md`, `docs/MCP_EXTENSION.md`, `docs/API_COVERAGE.md`. Epics #106 (admin API and
+UI) and #107 (MCP); 25 sub-issues (#108 to #132), #133, and five under #104 (#134 to #138).
+P1 working order set by the owner: #108, #109, #104, #110, #105, #115 to #117, #114, #113, #111, #112.
+Security points S1 to S5 (`docs/API_SECURITY.md`) are deferred by the owner.
+
+**Committed and pushed** (`5898141..6123616`):
+- #103 (`d78a769`): model and `llama-server` bundle moved into `models/` and `vendor/llama.cpp/`,
+  every mention of the earlier project removed, a test that keeps it that way; Docker build context
+  4.95 GB to 3.97 MB; the live engine restarted from the new paths (55 s of interruption).
+- #108 (`521391b`): a declared scope on every route, default deny, Host, Origin, size and time
+  protection, error ids, strict schemas. Authorization matrix, now 38 routes x 4 scopes.
+- #133 (`7acef08`): `/whoami`, `/status`, paging with `X-Total-Count`, tags, documented errors,
+  `API_VERSION`.
+- #109 (`4718a92`): command line generated from the routes (`--describe`, `--api`), jobs, `/config`,
+  `/backups`, actor `cli:<user>`, engine started with a cleared environment. `--status` and `--stop`
+  stay in bash on purpose (host scope, #111); restore and rekey are not API operations yet.
+- #104 (`6123616`) with #134 to #138: outbound guard, model list, delete, import and pull as jobs,
+  no network at inference. Measured on the real machine: import of a 986,048,576-byte blob and pull
+  of a 491,400,032-byte model with matching SHA256, a pull interrupted at 50% and resumed, a chat
+  turn with 0 connections outside the machine.
+
+**Working tree, not committed** (#110): four agent settings (`system_prompt` encrypted, `model`,
+`memory_mode`, `tools`), migration `b11c1796e218` checked on a copy of the real database (upgrade,
+`alembic check`, downgrade, upgrade all exit 0), applied by the graph at each turn; 1281 tests
+passed. It also carries the fix of a red test on the pushed commit `6123616`: the dev scripts held the
+throwaway test key (`test_no_committed_secrets` refuses it in tracked files); they now generate one.
+
+**Defects found while implementing** (all fixed, in the issue comments): an outbound guard that
+judged multicast and NAT64 or 6to4 addresses carrying a private address as public; a symlink in
+`models/` that would have made a delete remove its target; service errors shown as "Internal
+error" in failed jobs; `start.sh --api` reaching the engine through `host.docker.internal`; tests
+and scripts that ran turns on the real default database once `run_turn` read its agent.
+
+**Working method that held**: implement one issue, run the targeted tests, disable each control in
+turn (mutation check) and add a test for every survivor, validate on the real machine, post a status
+comment with numbers on the issue, leave it open. Commit and push only when the owner says so.
+
+**Owner steps left**: delete the earlier project's copy of the model and the engine bundle (the
+permission system blocked it; the command is in the #103 comment); rebuild the container (it still
+serves the API of before #108); decide on closing issues; commit the #110 batch.

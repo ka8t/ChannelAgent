@@ -20,7 +20,10 @@ work = tempfile.mkdtemp(prefix="no-network-turn-")
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{work}/turn.db"
 os.environ["CHECKPOINT_DB_PATH"] = f"{work}/checkpoints.db"
 os.environ.setdefault("LLAMA_SERVER_URL", "http://localhost:8080")
-os.environ.setdefault("ENCRYPTION_KEY", "PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=")
+# A throwaway key for a throwaway database: generated here, never written down.
+from cryptography.fernet import Fernet  # noqa: E402
+
+os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 local, outside, statuses = [], [], []
 real_connect, real_getaddrinfo = socket.socket.connect, socket.getaddrinfo

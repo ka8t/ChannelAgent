@@ -10,6 +10,7 @@ originating channel adapter (not this module's job).
 """
 
 import asyncio
+import contextvars
 import logging
 import time
 from collections.abc import Iterable
@@ -30,7 +31,8 @@ from langgraph.graph.message import add_messages
 
 from app import checkpoints
 from app.config import get_settings
-from app.db.models import Channel
+from app.db.models import Agent, Channel
+from app.db.session import session_scope
 from app.security.hashing import channel_identifier_key
 
 logger = logging.getLogger("channelagent")
@@ -156,8 +158,8 @@ async def _exact_counter(client: httpx.AsyncClient, messages: list[BaseMessage])
     return counter
 
 
-def _summary_cost(counter, summary: str) -> int:
-    return counter([SystemMessage(content=SUMMARY_HEADER + summary)]) if summary else 0
+def _prefix_cost(counter, prefix: str) -> int:
+    return counter([SystemMessage(content=prefix)]) if prefix else 0
 
 
 async def _chat(client: httpx.AsyncClient, messages: list[dict], **extra) -> str:
@@ -169,7 +171,7 @@ async def _chat(client: httpx.AsyncClient, messages: list[dict], **extra) -> str
 
 
 async def _summarize(
-    client: httpx.AsyncClient, previous: str, dropped: list[BaseMessage]
+    client: httpx.AsyncClient, previous: str, dropped: list[BaseMessage], **extra
 ) -> str | None:
     """Fold the dropped turns into the running summary with one model call (#86).
     Returns None when the call fails: the turn then goes on with the window alone.
@@ -184,6 +186,7 @@ async def _summarize(
                 client,
                 [{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": text}],
                 max_tokens=SUMMARY_MAX_TOKENS,
+                **extra,
             )
         ).strip()
     except Exception:
@@ -191,6 +194,24 @@ async def _summarize(
             "Summarizing the earlier conversation failed, using the window alone", exc_info=True
         )
         return None
+
+
+# The configuration of the agent whose turn is running (#110): its system prompt and model.
+# Handed to the node through a context variable and not through the graph's `configurable`,
+# because LangGraph copies those values into the checkpoint's metadata, and the prompt is
+# encrypted at rest for a reason.
+_agent_settings: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "agent_settings", default=None
+)
+
+
+def _prefix(system_prompt: str | None, summary: str) -> str:
+    """The one system message in front of the window: the agent's prompt, then the running
+    summary. One message, because several chat templates refuse a second system message."""
+    parts = [system_prompt] if system_prompt else []
+    if summary:
+        parts.append(SUMMARY_HEADER + summary)
+    return "\n\n".join(parts)
 
 
 async def call_llm(state: GraphState) -> GraphState:
@@ -213,18 +234,21 @@ async def call_llm(state: GraphState) -> GraphState:
     covers = state.get("summary_covers", 0)
     budget = history_token_budget(settings.llama_ctx_size)
     update: dict = {}
+    agent = _agent_settings.get() or {}
+    system_prompt, model = agent.get("system_prompt"), agent.get("model")
+    extra = {"model": model} if model else {}
 
     async with httpx.AsyncClient(base_url=settings.llama_server_url, timeout=120) as client:
         counter = await _exact_counter(client, messages)
-        room = budget - _summary_cost(counter, summary)
+        room = budget - _prefix_cost(counter, _prefix(system_prompt, summary))
         window = window_messages(messages, max(room, 1), counter)
         dropped = len(messages) - len(window)
         if dropped > covers and dropped - covers >= SUMMARY_BATCH:
-            folded = await _summarize(client, summary, messages[covers:dropped])
+            folded = await _summarize(client, summary, messages[covers:dropped], **extra)
             if folded:
                 summary, covers = folded, dropped
                 update = {"summary": summary, "summary_covers": covers}
-                room = budget - _summary_cost(counter, summary)
+                room = budget - _prefix_cost(counter, _prefix(system_prompt, summary))
                 window = window_messages(messages, max(room, 1), counter)
         if dropped:
             logger.info(
@@ -232,9 +256,10 @@ async def call_llm(state: GraphState) -> GraphState:
                 len(window), len(messages), covers,
             )
         sent = window
-        if summary:
-            sent = [SystemMessage(content=SUMMARY_HEADER + summary), *window]
-        reply = await _chat(client, convert_to_openai_messages(sent))
+        prefix = _prefix(system_prompt, summary)
+        if prefix:
+            sent = [SystemMessage(content=prefix), *window]
+        reply = await _chat(client, convert_to_openai_messages(sent), **extra)
 
     return {"messages": [AIMessage(content=reply)], **update}
 
@@ -328,6 +353,11 @@ async def run_turn(
     thread_id = build_thread_id(channel, user_id, agent_id)
     graph = await get_graph()
     config = {"configurable": {"thread_id": thread_id}}
+    async with session_scope() as session:
+        agent = await session.get(Agent, agent_id)
+    _agent_settings.set(
+        {"system_prompt": agent.system_prompt, "model": agent.model} if agent is not None else {}
+    )
     new_messages = [HumanMessage(content=text)]
     if retry:
         state = await graph.aget_state(config)

@@ -33,7 +33,7 @@ from app.api.schemas import (
     UserOut,
     UserUpdate,
 )
-from app.api.scopes import Scope, require
+from app.api.scopes import Principal, Scope, get_principal, require
 from app.db.models import (
     ActionLog,
     ActionStatus,
@@ -52,6 +52,21 @@ router = APIRouter()
 # Paging of the simple lists (#133): the body stays an array, the total is in a header.
 LIMIT = Query(default=200, ge=1, le=1000, description="At most this many items.")
 OFFSET = Query(default=0, ge=0, description="Skip this many items.")
+
+
+def _agent_out(agent: Agent, principal: Principal) -> AgentOut:
+    """An agent as the API returns it: its system prompt only to an administrator."""
+    return AgentOut(
+        id=agent.id,
+        user_id=agent.user_id,
+        name=agent.name,
+        is_active=agent.is_active,
+        system_prompt=agent.system_prompt if principal.scope >= Scope.ADMIN else None,
+        has_system_prompt=bool(agent.system_prompt),
+        model=agent.model,
+        memory_mode=agent.memory_mode,
+        tools=list(agent.tools or []),
+    )
 
 
 def _page(response: Response, items: list, limit: int, offset: int) -> list:
@@ -381,9 +396,11 @@ async def list_agents(
     limit: int = LIMIT,
     offset: int = OFFSET,
     session: AsyncSession = Depends(get_db_session),
-) -> list[Agent]:
+    principal: Principal = Depends(get_principal),
+) -> list[AgentOut]:
     """List a user's agents."""
-    return _page(response, await service.list_agents(session, user_id), limit, offset)
+    agents = _page(response, await service.list_agents(session, user_id), limit, offset)
+    return [_agent_out(a, principal) for a in agents]
 
 
 @router.post(
@@ -395,12 +412,18 @@ async def list_agents(
     responses=error_responses(404, 409),
 )
 async def create_agent(
-    user_id: int, body: AgentCreate, session: AsyncSession = Depends(get_db_session)
-) -> Agent:
-    """Create an agent for a user."""
-    agent = await service.create_agent(session, user_id, body.name, actor=current_actor())
+    user_id: int,
+    body: AgentCreate,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> AgentOut:
+    """Create an agent for a user, optionally with its system prompt, model, memory mode, tools."""
+    settings = body.model_dump(exclude={"name"}, include=body.model_fields_set - {"name"})
+    agent = await service.create_agent(
+        session, user_id, body.name, actor=current_actor(), settings=settings
+    )
     await session.commit()
-    return agent
+    return _agent_out(agent, principal)
 
 
 @router.get(
@@ -410,9 +433,13 @@ async def create_agent(
     tags=["agents"],
     responses=error_responses(404),
 )
-async def get_agent(agent_id: int, session: AsyncSession = Depends(get_db_session)) -> Agent:
+async def get_agent(
+    agent_id: int,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> AgentOut:
     """Show one agent."""
-    return await service.get_agent(session, agent_id)
+    return _agent_out(await service.get_agent(session, agent_id), principal)
 
 
 @router.patch(
@@ -423,10 +450,17 @@ async def get_agent(agent_id: int, session: AsyncSession = Depends(get_db_sessio
     responses=error_responses(404, 409),
 )
 async def update_agent(
-    agent_id: int, body: AgentUpdate, session: AsyncSession = Depends(get_db_session)
-) -> Agent:
-    """Rename and/or activate or deactivate, whoever owns the agent."""
+    agent_id: int,
+    body: AgentUpdate,
+    session: AsyncSession = Depends(get_db_session),
+    principal: Principal = Depends(get_principal),
+) -> AgentOut:
+    """Rename, activate or deactivate, or set the prompt, model, memory mode and tools of any
+    user's agent. Only the fields given change; a null prompt or model clears it."""
     agent = await service.get_agent(session, agent_id)
+    settings = body.model_dump(include=body.model_fields_set & set(service.CONFIG_FIELDS))
+    if settings:
+        agent = await service.configure_agent(session, agent_id, settings, actor=current_actor())
     if body.name is not None:
         agent = await service.rename_agent(session, agent_id, body.name, actor=current_actor())
     if body.is_active is not None:
@@ -434,7 +468,7 @@ async def update_agent(
             session, agent_id, body.is_active, actor=current_actor()
         )
     await session.commit()
-    return agent
+    return _agent_out(agent, principal)
 
 
 # --- Audit trail search (#39) ---

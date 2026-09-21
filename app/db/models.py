@@ -27,7 +27,7 @@ rationale):
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Enum, ForeignKey, String, UniqueConstraint, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.db.types import EncryptedString
@@ -143,6 +143,15 @@ class Agent(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    # Per-agent configuration (#110). The system prompt is what an administrator wrote to
+    # steer this agent and can hold private instructions, so it is encrypted at rest like the
+    # other free text (registered in app/admin/rekey.py and app/admin/service.py). The model
+    # (null = the engine's default), the memory mode and the tool allow-list are names and
+    # switches, not sensitive, and stay in clear so they can be listed and searched.
+    system_prompt: Mapped[str | None] = mapped_column(EncryptedString, default=None)
+    model: Mapped[str | None] = mapped_column(String(200), default=None)
+    memory_mode: Mapped[str] = mapped_column(String(16), default="off", server_default="off")
+    tools: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
 
 
 class ActionLog(Base):

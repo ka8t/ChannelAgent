@@ -44,6 +44,15 @@ class _CountingLLM(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+@pytest.fixture(autouse=True)
+async def _database(fresh_db):
+    """A turn reads its agent's settings from the database (#110): a throwaway one, which the
+    subprocesses that simulate a restart inherit through DATABASE_URL."""
+    from app.db.session import init_db
+
+    await init_db()
+
+
 @pytest.fixture
 def llm(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), _CountingLLM)

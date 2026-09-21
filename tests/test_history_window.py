@@ -95,6 +95,14 @@ class _Recorder(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+@pytest.fixture(autouse=True)
+async def _database(fresh_db):
+    """A turn reads its agent's settings from the database (#110): a throwaway one."""
+    from app.db.session import init_db
+
+    await init_db()
+
+
 @pytest.fixture
 def llm(monkeypatch):
     _Recorder.requests = []
