@@ -212,6 +212,12 @@ async def test_each_agent_keeps_its_own_conversation_with_the_real_graph(world):
             pass
 
         def do_POST(self):
+            if self.path != "/v1/chat/completions":  # no tokenizer on this mock
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             data = json.dumps(
                 {"choices": [{"message": {"content": f"N={len(body['messages'])}"}}]}

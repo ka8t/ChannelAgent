@@ -11,6 +11,7 @@ originating channel adapter (not this module's job).
 
 import asyncio
 import logging
+import time
 from collections.abc import Iterable
 from typing import Annotated, TypedDict
 
@@ -19,6 +20,7 @@ from langchain_core.messages import (
     AIMessage,
     BaseMessage,
     HumanMessage,
+    SystemMessage,
     convert_to_openai_messages,
     trim_messages,
 )
@@ -40,6 +42,10 @@ class GraphState(TypedDict):
     # reducer, every turn would overwrite the prior conversation
     # instead of continuing it, defeating the point of the checkpointer.
     messages: Annotated[list[BaseMessage], add_messages]
+    # Running summary of the turns that fell out of the model's window (#86), and how
+    # many messages it covers. Absent in checkpoints written before #86.
+    summary: str
+    summary_covers: int
 
 
 def build_thread_id(channel: Channel, user_id: str, agent_id: int) -> str:
@@ -62,32 +68,129 @@ def thread_id_from_key(channel: Channel, identity_key: str, agent_id: int) -> st
 
 
 # Share of the model's context window the conversation may fill. The rest is
-# left for the reply and for the error of the token estimate (#47).
+# left for the reply and for any error of the token count (#47).
 HISTORY_CONTEXT_SHARE = 0.75
+
+# Tokens added around each message by the chat template (role markers), counted
+# on top of the message text when the server's tokenizer is used (#87).
+MESSAGE_OVERHEAD_TOKENS = 4
+
+# The turns that fall out of the window are summarized (#86), but only once at
+# least this many are new since the last summary, so a long conversation does
+# not pay one extra model call per turn.
+SUMMARY_BATCH = 6
+SUMMARY_MAX_TOKENS = 300
+SUMMARY_PROMPT = (
+    "You maintain the memory of a conversation. Write a summary of at most 200 words. "
+    "Keep every concrete fact the user gave (names, numbers, identifiers, dates, "
+    "preferences, decisions) exactly as written, and never drop an item of the earlier "
+    "summary. Leave out small talk. Write only the summary."
+)
+SUMMARY_HEADER = "Summary of the earlier part of this conversation: "
+
+# Exact token counts already obtained from the server, by message id (#87), and the
+# time until which a server without a usable tokenizer is not asked again.
+_token_cache: dict[str, int] = {}
+_TOKENIZER_RETRY_SECONDS = 300
+_tokenizer_down_until = 0.0
 
 
 def history_token_budget(ctx_size: int) -> int:
     return int(ctx_size * HISTORY_CONTEXT_SHARE)
 
 
-def window_messages(messages: list[BaseMessage], budget: int) -> list[BaseMessage]:
-    """The most recent turns that fit in `budget` estimated tokens (#47).
+def window_messages(
+    messages: list[BaseMessage], budget: int, token_counter=count_tokens_approximately
+) -> list[BaseMessage]:
+    """The most recent turns that fit in `budget` tokens (#47).
 
     Starts on a human message so a reply is never sent without its question,
     and always keeps the latest message, even alone above the budget. Only
     what is sent to the model is cut: the checkpoint keeps the whole history
-    and the audit trail (ActionLog) is untouched. The count is the
-    characters-per-token estimate of langchain, not the model's tokenizer.
+    and the audit trail (ActionLog) is untouched. `token_counter` defaults to
+    the characters-per-token estimate of langchain; call_llm passes exact counts
+    from the server's tokenizer when it answers (#87).
     """
     kept = trim_messages(
         messages,
         max_tokens=budget,
-        token_counter=count_tokens_approximately,
+        token_counter=token_counter,
         strategy="last",
         start_on="human",
         allow_partial=False,
     )
     return kept or messages[-1:]
+
+
+async def _exact_counter(client: httpx.AsyncClient, messages: list[BaseMessage]):
+    """A token counter using the server's own tokenizer (`/tokenize`, #87), or the
+    estimate when the server does not offer it. Each message is tokenized once,
+    then remembered by its id.
+    """
+    global _tokenizer_down_until
+    if time.monotonic() < _tokenizer_down_until:
+        return count_tokens_approximately
+    counts: dict[str, int] = {}
+    try:
+        for message in messages:
+            key = message.id
+            if key is not None and key in _token_cache:
+                counts[key] = _token_cache[key]
+                continue
+            response = await client.post("/tokenize", json={"content": str(message.content)})
+            response.raise_for_status()
+            n_tokens = len(response.json()["tokens"]) + MESSAGE_OVERHEAD_TOKENS
+            counts[key or str(id(message))] = n_tokens
+            if key is not None:
+                _token_cache[key] = n_tokens
+    except Exception:
+        _tokenizer_down_until = time.monotonic() + _TOKENIZER_RETRY_SECONDS
+        logger.debug("The server's tokenizer is not usable, estimating token counts", exc_info=True)
+        return count_tokens_approximately
+
+    def counter(batch: list[BaseMessage]) -> int:
+        return sum(
+            counts.get(m.id or str(id(m)), 0) or count_tokens_approximately([m]) for m in batch
+        )
+
+    return counter
+
+
+def _summary_cost(counter, summary: str) -> int:
+    return counter([SystemMessage(content=SUMMARY_HEADER + summary)]) if summary else 0
+
+
+async def _chat(client: httpx.AsyncClient, messages: list[dict], **extra) -> str:
+    response = await client.post(
+        "/v1/chat/completions", json={"messages": messages, "stream": False, **extra}
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
+async def _summarize(
+    client: httpx.AsyncClient, previous: str, dropped: list[BaseMessage]
+) -> str | None:
+    """Fold the dropped turns into the running summary with one model call (#86).
+    Returns None when the call fails: the turn then goes on with the window alone.
+    """
+    transcript = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}" for m in dropped
+    )
+    text = (f"Earlier summary: {previous}\n\n" if previous else "") + transcript
+    try:
+        return (
+            await _chat(
+                client,
+                [{"role": "system", "content": SUMMARY_PROMPT}, {"role": "user", "content": text}],
+                max_tokens=SUMMARY_MAX_TOKENS,
+            )
+        ).strip()
+    except Exception:
+        logger.warning(
+            "Summarizing the earlier conversation failed, using the window alone", exc_info=True
+        )
+        return None
 
 
 async def call_llm(state: GraphState) -> GraphState:
@@ -98,25 +201,42 @@ async def call_llm(state: GraphState) -> GraphState:
     endpoint — works unchanged against the native Mac llama-server or a
     containerized Ollama/vLLM backend, since only LLAMA_SERVER_URL
     differs between them (see docs/ARCHITECTURE.md).
+
+    The request holds the most recent turns that fit the budget (#47, counted
+    with the server's tokenizer when it has one, #87) and, in front of them, a
+    running summary of the turns that fell out of the window (#86). Both are
+    only what is sent: the checkpoint keeps every message.
     """
     settings = get_settings()
-    window = window_messages(state["messages"], history_token_budget(settings.llama_ctx_size))
-    if len(window) < len(state["messages"]):
-        logger.info(
-            "Conversation trimmed for the model: %d of %d messages sent",
-            len(window),
-            len(state["messages"]),
-        )
-    payload_messages = convert_to_openai_messages(window)
-    async with httpx.AsyncClient(base_url=settings.llama_server_url, timeout=120) as client:
-        response = await client.post(
-            "/v1/chat/completions",
-            json={"messages": payload_messages, "stream": False},
-        )
-        response.raise_for_status()
-        reply = response.json()["choices"][0]["message"]["content"]
+    messages = state["messages"]
+    summary = state.get("summary", "")
+    covers = state.get("summary_covers", 0)
+    budget = history_token_budget(settings.llama_ctx_size)
+    update: dict = {}
 
-    return {"messages": [AIMessage(content=reply)]}
+    async with httpx.AsyncClient(base_url=settings.llama_server_url, timeout=120) as client:
+        counter = await _exact_counter(client, messages)
+        room = budget - _summary_cost(counter, summary)
+        window = window_messages(messages, max(room, 1), counter)
+        dropped = len(messages) - len(window)
+        if dropped > covers and dropped - covers >= SUMMARY_BATCH:
+            folded = await _summarize(client, summary, messages[covers:dropped])
+            if folded:
+                summary, covers = folded, dropped
+                update = {"summary": summary, "summary_covers": covers}
+                room = budget - _summary_cost(counter, summary)
+                window = window_messages(messages, max(room, 1), counter)
+        if dropped:
+            logger.info(
+                "Conversation trimmed for the model: %d of %d messages sent (%d summarized)",
+                len(window), len(messages), covers,
+            )
+        sent = window
+        if summary:
+            sent = [SystemMessage(content=SUMMARY_HEADER + summary), *window]
+        reply = await _chat(client, convert_to_openai_messages(sent))
+
+    return {"messages": [AIMessage(content=reply)], **update}
 
 
 def build_graph() -> StateGraph:

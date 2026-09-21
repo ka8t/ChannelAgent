@@ -47,6 +47,7 @@ async def isolated_checkpoints(tmp_path, monkeypatch):
     belongs to the test's event loop, is closed when the test ends.
     """
     monkeypatch.setenv("CHECKPOINT_DB_PATH", str(tmp_path / "checkpoints.db"))
+    from app import graph as graph_module
     from app.api import deps
     from app.config import get_settings
     from app.db import types
@@ -54,6 +55,8 @@ async def isolated_checkpoints(tmp_path, monkeypatch):
     get_settings.cache_clear()
     types.reset_warning_state()
     deps.reset_failure_state()
+    graph_module._token_cache.clear()
+    graph_module._tokenizer_down_until = 0.0
     yield
     from app import graph
 
@@ -68,3 +71,4 @@ def isolated_heartbeat(tmp_path, monkeypatch):
     from app import health
 
     monkeypatch.setattr(health, "HEARTBEAT_PATH", tmp_path / "channelagent.heartbeat")
+    health._components.clear()

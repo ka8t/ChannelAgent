@@ -11,6 +11,7 @@ import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
+from app import health
 from app.channels import notify
 from app.channels.dispatch import dispatch_event, handle_agent_command
 from app.channels.schema import NormalizedEvent
@@ -60,6 +61,24 @@ def build_application() -> Application:
     return application
 
 
+LIVENESS_INTERVAL_SECONDS = 60
+LIVENESS_MAX_AGE_SECONDS = 300
+
+
+async def _liveness_loop(bot, interval: float = LIVENESS_INTERVAL_SECONDS) -> None:
+    """Proves the path to Telegram works (`getMe`) and tells the healthcheck (#90).
+    A failure is only logged: the container turns unhealthy when none succeeds for
+    LIVENESS_MAX_AGE_SECONDS.
+    """
+    while True:
+        try:
+            await bot.get_me()
+            health.mark("telegram")
+        except Exception:
+            logger.warning("Telegram getMe failed", exc_info=True)
+        await asyncio.sleep(interval)
+
+
 async def run_telegram_adapter() -> None:
     """Runs inside the caller's own asyncio event loop (app/main.py) —
     deliberately not Application.run_polling(), which manages its own
@@ -76,9 +95,13 @@ async def run_telegram_adapter() -> None:
 
         notify.register_sender(Channel.TELEGRAM, send_to_admin)
         logger.info("Telegram adapter started (long polling).")
+        health.register("telegram", LIVENESS_MAX_AGE_SECONDS)
+        liveness = asyncio.create_task(_liveness_loop(application.bot))
         try:
             await asyncio.Event().wait()  # runs until this task is cancelled
         finally:
+            liveness.cancel()
+            health.unregister("telegram")
             notify.unregister_sender(Channel.TELEGRAM)
             await application.updater.stop()
             await application.stop()

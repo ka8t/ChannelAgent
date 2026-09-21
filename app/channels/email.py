@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from email.header import decode_header
 from email.mime.text import MIMEText
 
+from app import health
 from app.channels.dispatch import DispatchOutcome, dispatch_event
 from app.channels.schema import NormalizedEvent
 from app.config import get_settings
@@ -39,6 +40,8 @@ from app.db.session import session_scope
 logger = logging.getLogger("channelagent")
 
 POLL_INTERVAL_SECONDS = 15
+# The container is reported unhealthy when no poll completed for this long (#90).
+LIVENESS_MAX_AGE_SECONDS = 300
 
 
 def _decode(value: str) -> str:
@@ -337,9 +340,14 @@ async def run_email_adapter() -> None:
         tag,
         repr(folder) if folder.strip() else "nowhere (stays in INBOX)",
     )
-    while True:
-        try:
-            await _poll_once()
-        except Exception:
-            logger.exception("Email poll failed")
-        await asyncio.sleep(POLL_INTERVAL_SECONDS)
+    health.register("email", LIVENESS_MAX_AGE_SECONDS)
+    try:
+        while True:
+            try:
+                await _poll_once()
+                health.mark("email")
+            except Exception:
+                logger.exception("Email poll failed")
+            await asyncio.sleep(POLL_INTERVAL_SECONDS)
+    finally:
+        health.unregister("email")

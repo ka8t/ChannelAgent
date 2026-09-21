@@ -12,15 +12,46 @@ Stdlib only, on purpose: the check starts a fresh Python every interval.
 """
 
 import asyncio
+import logging
 import sys
 import tempfile
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
+logger = logging.getLogger("channelagent")
+
 HEARTBEAT_PATH = Path(tempfile.gettempdir()) / "channelagent.heartbeat"
 INTERVAL_SECONDS = 15
 MAX_AGE_SECONDS = 60
+
+
+# Components that must show a recent success (#90). A running task that is stuck on
+# the network (a poll that never returns) would otherwise keep the heartbeat alive.
+# name -> [max age in seconds, monotonic time of the last success]
+_components: dict[str, list[float]] = {}
+
+
+def register(name: str, max_age: float) -> None:
+    """Start expecting a success from `name` at least every `max_age` seconds. The
+    registration itself counts as the first one, so a slow start is not a failure.
+    """
+    _components[name] = [max_age, time.monotonic()]
+
+
+def unregister(name: str) -> None:
+    _components.pop(name, None)
+
+
+def mark(name: str) -> None:
+    """`name` just did what it is for (a poll completed, the API answered)."""
+    if name in _components:
+        _components[name][1] = time.monotonic()
+
+
+def stale_components() -> list[str]:
+    now = time.monotonic()
+    return sorted(n for n, (max_age, last) in _components.items() if now - last > max_age)
 
 
 def beat(path: Path | None = None) -> None:
@@ -33,7 +64,14 @@ async def heartbeat(components: Sequence[asyncio.Task], interval: float = INTERV
     component has ended it stops, so the container turns unhealthy.
     """
     while not components or any(not task.done() for task in components):
-        beat()
+        stale = stale_components()
+        if stale:
+            logger.warning(
+                "Not beating: no recent success from %s (the container turns unhealthy)",
+                ", ".join(stale),
+            )
+        else:
+            beat()
         await asyncio.sleep(interval)
 
 

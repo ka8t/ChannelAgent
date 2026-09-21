@@ -177,8 +177,8 @@ Facts, refreshed when they change; the issues have the detail.
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
   adapters are live; Matrix (#29) and a dedicated bot mailbox (#42) were set
   aside by the owner on 2026-09-21.
-- Last full test suite: 1030 passed, 0 failed (120 s), `ruff check .` clean
-  (2026-09-21, on cef5596).
+- Last full test suite: 1052 passed, 0 failed (128 s), `ruff check .` clean
+  (2026-09-21, working tree after cef5596: #86, #87, #89, #90 done, uncommitted).
   Targeted runs while working; the full suite once per batch, before a commit
   (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).

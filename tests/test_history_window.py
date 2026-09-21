@@ -79,6 +79,12 @@ class _Recorder(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        if self.path != "/v1/chat/completions":  # no tokenizer on this mock
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).requests.append(body["messages"])
         data = json.dumps({"choices": [{"message": {"content": "r" * 150}}]}).encode()
@@ -105,12 +111,16 @@ def llm(monkeypatch):
 
 
 async def test_requests_stay_under_the_budget_over_a_long_conversation(llm):
+    from app.graph import SUMMARY_PROMPT
+
     turns = 60
     for i in range(turns):
         await graph.run_turn(Channel.TELEGRAM, "42", 1, f"message {i} " + "q" * 200)
 
     budget = history_token_budget(CTX_SIZE)
-    assert len(llm.requests) == turns
+    # Summary calls (#86) are separate requests; the turn requests are the others.
+    chat = [r for r in llm.requests if r[0]["content"] != SUMMARY_PROMPT]
+    assert len(chat) == turns
     sizes = [
         count_tokens_approximately(
             [
@@ -118,13 +128,14 @@ async def test_requests_stay_under_the_budget_over_a_long_conversation(llm):
                 for m in sent
             ]
         )
-        for sent in llm.requests
+        for sent in chat
     ]
     assert max(sizes) <= budget
-    for i, sent in enumerate(llm.requests):
+    for i, sent in enumerate(chat):
         assert sent[-1]["content"].startswith(f"message {i} ")
-        assert sent[0]["role"] == "user"
-    assert len(llm.requests[-1]) < 2 * turns - 1
+        body = sent[1:] if sent[0]["role"] == "system" else sent
+        assert body[0]["role"] == "user"
+    assert len(chat[-1]) < 2 * turns - 1
 
 
 async def test_the_checkpoint_keeps_the_whole_history(llm):

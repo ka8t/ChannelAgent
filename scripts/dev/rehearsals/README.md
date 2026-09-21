@@ -12,6 +12,7 @@ repository root. They need Docker (except `rekey_rehearsal.sh`) and a built
 | `container_healthcheck.sh` | image goes `healthy`, then `unhealthy` when frozen | #48 |
 | `container_user.sh` | uid, fresh volume, existing data copy, root-owned directory | #70 |
 | `tls_proxy.sh` | HTTPS 401/200, plain HTTP, LAN address refused, control | #60 |
+| `autoheal.sh` | a frozen container is restarted by the autoheal overlay | #89 |
 | `ssh_tunnel.sh` | the documented SSH tunnel to the Admin API: 401 / 401 / 200, closed after | #91 |
 | `rekey_rehearsal.sh` | `./start.sh --rekey` on a copy of the real data | #78 |
 

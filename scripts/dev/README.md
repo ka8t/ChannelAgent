@@ -23,7 +23,7 @@ real code for good.
 | `mutation_check.py SPEC` | Generic runner: applies each mutation of a spec, runs its tests, restores the files, lists survivors. |
 | `mutations/spec_issue_*.py` | Specs for the runner (#60, #65, #70, #85). |
 | `mutations/issue_*.py` | Earlier self-contained mutation scripts, one per issue (#47 to #84); run them directly. |
-| `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78, #91); see `rehearsals/README.md`. |
+| `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78, #89, #91); see `rehearsals/README.md`. |
 | `tools/verify_closed_issues.py` | Fresh end-to-end check of closed issues on a throwaway database and a mock model. |
 | `tools/run_test_groups.py` | Runs the targeted test files of each issue and prints the last pytest line. |
 | `tools/mock_llm_counting.py`, `tools/run_turns.py` | A mock model that answers with the number of messages it received, and a client that runs N turns (used to show a conversation surviving a restart). |
@@ -31,6 +31,8 @@ real code for good.
 | `tools/check_claude_split.py` | Checks that no rule bullet was lost when `CLAUDE.md` was split (#71). |
 | `tools/scan_changed_files.sh` | gitleaks on the changed and new files only (the whole tree includes the real `.env`). |
 | `live/email_poller_instrumented.py` | Live run of only the email adapter against the real mailbox, every IMAP command logged, never credentials. |
+| `live/summary_real_model.py` | Summary and exact token counts against the real llama-server (#86, #87). |
+| `live/stuck_adapter_demo.py` | Real application with an email adapter stuck on a silent IMAP server: healthy then unhealthy (#90). |
 | `live/email_failed_turn_live.py` | Live check of the failed-turn path on the real mailbox (#51). |
 | `live/agent_selection_check.py` | Checks agent selection through the API and the dispatcher with a fake model (#54). |
 | `../bench_log_search.py` | Times log search at 1k, 10k and 100k rows (#56). |

@@ -142,6 +142,11 @@ class _FakeApplication:
         self.calls = []
         self.updater = SimpleNamespace(start_polling=self._start_polling, stop=self._updater_stop)
 
+        async def get_me():
+            return None
+
+        self.bot = SimpleNamespace(get_me=get_me)
+
     async def __aenter__(self):
         self.calls.append("enter")
         return self
@@ -175,3 +180,30 @@ async def test_the_adapter_polls_dropping_pending_updates_and_stops_cleanly(monk
     with pytest.raises(asyncio.CancelledError):
         await task
     assert fake.calls[-3:] == ["updater_stop", "stop", "exit"], "shut down in order on cancel"
+
+
+async def test_the_running_adapter_registers_with_the_healthcheck_and_proves_getme(monkeypatch):
+    """#90: while running, the adapter is expected to succeed regularly and calls getMe;
+    once stopped it no longer holds the healthcheck.
+    """
+    from app import health
+
+    fake = _FakeApplication()
+    asked = []
+
+    async def get_me():
+        asked.append(1)
+
+    fake.bot = SimpleNamespace(get_me=get_me)
+    monkeypatch.setattr(telegram, "build_application", lambda: fake)
+    task = asyncio.create_task(telegram.run_telegram_adapter())
+    for _ in range(100):
+        await asyncio.sleep(0.01)
+        if asked:
+            break
+    assert asked == [1] and "telegram" in health._components
+    assert health.stale_components() == []
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert "telegram" not in health._components

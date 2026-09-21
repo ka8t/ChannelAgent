@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 from app import health
 
 REPO = Path(__file__).resolve().parent.parent
@@ -165,3 +167,91 @@ def test_a_running_application_is_healthy_and_a_stuck_one_is_not(tmp_path):
         os.kill(app.pid, signal.SIGCONT)
         app.terminate()
         app.wait(timeout=30)
+
+
+# --- #90: a component that runs but has stopped succeeding ---
+
+
+def test_a_registered_component_is_stale_only_after_its_max_age(monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(health.time, "monotonic", lambda: now[0])
+    health.register("email", 300)
+    assert health.stale_components() == []
+    now[0] += 299
+    assert health.stale_components() == []
+    now[0] += 2
+    assert health.stale_components() == ["email"]
+    health.mark("email")
+    assert health.stale_components() == []
+    health.unregister("email")
+    now[0] += 10_000
+    assert health.stale_components() == []
+
+
+def test_marking_an_unknown_component_does_nothing():
+    health.mark("nobody")
+    assert health.stale_components() == []
+
+
+async def test_the_heartbeat_stops_while_a_component_is_stale_and_resumes_after_a_success(caplog):
+    health.register("telegram", 0.15)
+    component = asyncio.create_task(_running())
+    beating = asyncio.create_task(health.heartbeat([component], interval=0.03))
+    await asyncio.sleep(0.05)
+    assert health.check(max_age=0.2)[0], "fresh at first"
+    await asyncio.sleep(0.5)  # no success for longer than the component's max age
+    assert not health.check(max_age=0.2)[0], "the file went stale"
+    assert "no recent success from telegram" in caplog.text
+    health.mark("telegram")
+    await asyncio.sleep(0.1)
+    assert health.check(max_age=0.2)[0], "a success brings the heartbeat back"
+    beating.cancel()
+    component.cancel()
+    await asyncio.gather(beating, component, return_exceptions=True)
+
+
+async def test_the_email_adapter_marks_only_after_a_completed_poll(monkeypatch):
+    from app.channels import email as email_adapter
+
+    calls = []
+
+    async def poll():
+        calls.append(1)
+        if len(calls) == 2:
+            raise RuntimeError("IMAP down")
+        if len(calls) == 4:
+            raise asyncio.CancelledError
+
+    marks = []
+    monkeypatch.setattr(email_adapter, "_poll_once", poll)
+    monkeypatch.setattr(email_adapter, "POLL_INTERVAL_SECONDS", 0)
+    monkeypatch.setattr(email_adapter.health, "mark", lambda name: marks.append(name))
+    monkeypatch.setattr(
+        email_adapter, "get_settings",
+        lambda: type("S", (), {"email_trigger_tag": "[agent]", "email_agent_folder": ""})(),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await email_adapter.run_email_adapter()
+    assert calls == [1, 1, 1, 1]
+    assert marks == ["email", "email"], "marked after polls 1 and 3, not after the failed 2"
+    assert health.stale_components() == [] and "email" not in health._components
+
+
+async def test_the_telegram_liveness_loop_marks_on_get_me_success_only(monkeypatch):
+    from app.channels import telegram
+
+    outcomes = [True, False, True]
+    marks = []
+
+    class Bot:
+        async def get_me(self):
+            ok = outcomes.pop(0)
+            if not outcomes:
+                raise asyncio.CancelledError
+            if not ok:
+                raise RuntimeError("network down")
+
+    monkeypatch.setattr(telegram.health, "mark", lambda name: marks.append(name))
+    with pytest.raises(asyncio.CancelledError):
+        await telegram._liveness_loop(Bot(), interval=0)
+    assert marks == ["telegram"], "one success marked, the failure did not"

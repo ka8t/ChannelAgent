@@ -64,6 +64,12 @@ class _LLM(BaseHTTPRequestHandler):
         pass
 
     def do_POST(self):
+        if self.path != "/v1/chat/completions":  # no tokenizer on this mock
+            self.rfile.read(int(self.headers.get("Content-Length", 0)))
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.rfile.read(int(self.headers["Content-Length"]))
         data = json.dumps({"choices": [{"message": {"content": "ok"}}]}).encode()
         self.send_response(200)

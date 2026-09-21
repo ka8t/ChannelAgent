@@ -751,12 +751,29 @@ ps` shows `healthy` or `unhealthy`. Measured on a throwaway container:
 `healthy` 10 s after start; after freezing the process (`docker kill
 --signal=SIGSTOP`) `unhealthy` with `last heartbeat 61 s ago (limit 60 s)`.
 
-Known limits: `restart: unless-stopped` restarts a container that exits, not
-one that turns `unhealthy` (Docker only reports it; a supervisor such as
-Docker Swarm, or an external monitor, has to act on it). The check proves the
-process and its event loop are alive, not that Telegram or the mailbox
-answer: a component that is running but stuck on the network still reads as
-healthy.
+**A running adapter that stopped succeeding turns the container unhealthy** (#90).
+Each adapter registers with `app/health.py` and reports a success: the email adapter
+after every completed poll (`LIVENESS_MAX_AGE_SECONDS` = 300), the Telegram adapter
+through a `getMe` call every 60 s (max age 300). While a registered component has
+had no success for longer than its max age, the heartbeat stops (warning
+"no recent success from <name>") and the container turns `unhealthy` 60 s later;
+one success brings it back. Measured with the real application and an email adapter
+blocked on an IMAP server that accepts and never answers, limits shortened (max age
+6 s, heartbeat every 1 s, check limit 3 s; `scripts/dev/live/stuck_adapter_demo.py`):
+`healthy` at t+1 s, `UNHEALTHY` at t+9 s.
+
+**Restarting an unhealthy container** (#89): `restart: unless-stopped` only reacts to an
+exit, so `docker-compose.autoheal.yml` adds a small watcher (`willfarrell/autoheal`,
+about 5.8 MB) that restarts the containers labelled `autoheal` while they are
+`unhealthy`: `docker compose -f docker-compose.yml -f docker-compose.autoheal.yml up -d`.
+It needs the Docker socket, which is root-equivalent on the host: use it on a host
+you administer. Measured with `scripts/dev/rehearsals/autoheal.sh` (frozen container,
+healthcheck interval 5 s): `unhealthy` 56 s after the freeze (the 60 s heartbeat
+limit), restarted at 75 s (`StartedAt` changed), `healthy` again afterwards; the
+watcher logged `found to be unhealthy - Restarting container now`.
+
+Known limit: the Admin API is not part of the liveness set.
+
 
 ### No secret in a log (#82)
 
@@ -1005,15 +1022,28 @@ the checkpoint ids stay readable.
   conversation threads too.
 - **The history sent to the model is windowed** ([#47](https://github.com/ka8t/ChannelAgent/issues/47)).
   `app/graph.py::window_messages` keeps the most recent turns that fit in
-  75% of `LLAMA_CTX_SIZE` (the rest is left for the reply and for the error
-  of the estimate), starts the window on a user message, and always keeps
-  the latest message, even alone above the budget. Only the request is
-  cut: the checkpoint keeps the whole history and the audit trail
-  (`action_logs`) is untouched. Known limits: tokens are estimated at
-  about 4 characters each (langchain's `count_tokens_approximately`), not
-  counted with the model's tokenizer, and the model forgets what is
-  outside the window (no summary of the dropped turns). A single message
-  larger than the context window still fails.
+  75% of `LLAMA_CTX_SIZE` (the rest is left for the reply), starts the window
+  on a user message, and always keeps the latest message, even alone above the
+  budget. Only the request is cut: the checkpoint keeps the whole history and the
+  audit trail (`action_logs`) is untouched.
+- **Exact token counts** ([#87](https://github.com/ka8t/ChannelAgent/issues/87)).
+  Each message is counted with the server's own tokenizer (`POST /tokenize`, plus
+  4 tokens of template overhead) and remembered by its id, so it is tokenized once.
+  A server without a usable `/tokenize` is not asked again for 5 minutes and the
+  count falls back to about 4 characters per token.
+- **Running summary of what fell out of the window**
+  ([#86](https://github.com/ka8t/ChannelAgent/issues/86)). Once at least 6 messages
+  have left the window since the last summary, one extra model call folds them,
+  with the earlier summary, into a new summary (at most 200 words, prompt keeps
+  every concrete fact and drops none of the earlier summary). It is stored in the
+  checkpoint (`summary`, `summary_covers`) and sent as a system message in front of
+  the window, its size counted in the budget. A failing summary call is logged and
+  the turn goes on with the window alone. Measured with the real model
+  (`scripts/dev/live/summary_real_model.py`, context 700, 26 turns): a fact given in
+  the first message was answered correctly at the end in 3 runs of 3 (with the first,
+  weaker prompt it was lost). Limits: the summary is written by the same small model
+  and can lose detail; up to 5 messages just outside the window are neither in the
+  window nor yet in a summary; a single message larger than the window still fails.
 
 ### Compute topology
 
