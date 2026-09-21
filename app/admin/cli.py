@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from app.admin import service
 from app.db.models import ActionStatus, Channel, Direction, PermissionKind
 from app.db.session import init_db, session_scope
+from app.logging_setup import install_redaction
 from app.security.permissions import harden_process, warn_about_loose_application_files
 
 logger = logging.getLogger("channelagent")
@@ -422,6 +423,7 @@ _MENU = {
 
 
 async def main() -> None:
+    install_redaction()
     harden_process()
     await init_db()
     warn_about_loose_application_files()

@@ -518,6 +518,27 @@ hand is understood too. Tested against bash, python-dotenv, the application's
 `Settings` and `docker compose config` (which prints a literal `$` as `$$`, only
 in its output).
 
+### No secret in a log (#82)
+
+A secret never reaches a log, at any level. The cause that was found: the
+Telegram bot token is part of every Bot API URL (`/bot<token>/getMe`) and httpx
+logged the URL of each request at INFO, so with the adapter running the complete
+token was written to the terminal and to `docker logs`, once per poll. Two
+layers in `app/logging_setup.py`, installed by `app/main.py`, the console, the
+rotation and the restore commands:
+1. `httpx` and `httpcore` log at WARNING or above only.
+2. Every log record is scrubbed **when it is created** (a log-record factory,
+   not a handler filter: uvicorn rebuilds its own handlers when it starts, so a
+   filter on handlers would not hold for its lines): anything shaped like a
+   Telegram token (`<5+ digits>:<20+ token characters>`), and the literal value
+   of each configured secret (`TELEGRAM_BOT_TOKEN`, `API_SERVER_KEY`,
+   `ENCRYPTION_KEY`, `EMAIL_PASSWORD`, `MATRIX_BOT_ACCESS_TOKEN`, and the
+   `OLD_ENCRYPTION_KEY` given to a rotation) of 8 characters or more, becomes
+   `<redacted>` in the message, its arguments, the traceback and the stack.
+Anything that displays configuration (`--show-config`) masks secrets on its own.
+If a secret was ever displayed, rotate it: the Telegram token through BotFather
+(`/revoke`), then `./start.sh --set TELEGRAM_BOT_TOKEN=...`.
+
 ### Restoring a backup (#76)
 
 `./start.sh --restore` (`app/admin/restore.py`, run in the virtualenv like the

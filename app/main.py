@@ -16,9 +16,10 @@ from app.config import get_settings
 from app.db.bootstrap import bootstrap_admin_from_env
 from app.db.session import init_db, session_scope
 from app.graph import close_graph, get_graph
+from app.logging_setup import configure_logging
 from app.security.permissions import harden_process, warn_about_loose_application_files
 
-logging.basicConfig(level=logging.INFO)
+configure_logging()
 logger = logging.getLogger("channelagent")
 
 

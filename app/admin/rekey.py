@@ -29,6 +29,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.db.backup import make_backup
+from app.logging_setup import install_redaction
 from app.security.permissions import harden_process
 
 # (table, key column, value column)
@@ -236,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
         help="environment variable holding the OLD key (default %(default)s)",
     )
     args = parser.parse_args(argv)
+    install_redaction()
     harden_process()
 
     from app.checkpoints import checkpoint_db_path

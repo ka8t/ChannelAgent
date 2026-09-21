@@ -34,6 +34,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from app.admin.rekey import APP_COLUMNS
 from app.db.backup import BACKUP_DIR_NAME, _current_revision, make_backup
+from app.logging_setup import install_redaction
 from app.security.permissions import harden_process
 
 CONFIRM_WORD = "RESTORE"
@@ -408,6 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         help="restore even if some values cannot be decrypted with the current key",
     )
     args = parser.parse_args(argv)
+    install_redaction()
     harden_process()
 
     from app.config import get_settings
