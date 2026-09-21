@@ -1,6 +1,7 @@
+from cryptography.fernet import Fernet
 import asyncio, os, tempfile
 d=tempfile.mkdtemp()
-os.environ.update(DATABASE_URL=f"sqlite+aiosqlite:///{d}/t.db", CHECKPOINT_DB_PATH=f"{d}/c.db", ENCRYPTION_KEY="PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=", MIGRATION_BACKUPS_KEEP="0")
+os.environ.update(DATABASE_URL=f"sqlite+aiosqlite:///{d}/t.db", CHECKPOINT_DB_PATH=f"{d}/c.db", ENCRYPTION_KEY=Fernet.generate_key().decode(), MIGRATION_BACKUPS_KEEP="0")
 from app.admin import service
 from app.db.models import Channel
 from app.db.session import init_db, session_scope

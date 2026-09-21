@@ -24,6 +24,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from cryptography.fernet import Fernet
+
 REPEATS = 3
 CHUNK = 5000
 _SENTENCE = (
@@ -40,7 +42,7 @@ async def _bench(rows: int, tmp: Path) -> dict:
     os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{tmp}/bench-{rows}.db"
     os.environ["CHECKPOINT_DB_PATH"] = str(tmp / f"checkpoints-{rows}.db")
     os.environ["MIGRATION_BACKUPS_KEEP"] = "0"
-    os.environ.setdefault("ENCRYPTION_KEY", "PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=")
+    os.environ.setdefault("ENCRYPTION_KEY", Fernet.generate_key().decode())
 
     from sqlalchemy import insert
 
