@@ -133,6 +133,12 @@ How the guarantees are enforced (`app/channels/email.py`):
   Seen when `EMAIL_AGENT_FOLDER` is empty), and each failure has an audit
   entry with status `failed`. One message that raises does not stop the
   others in the same poll.
+- **Capabilities are asked of the server after login** (found on the live mailbox,
+  2026-09-21). Under Python 3.12, the interpreter of the image, `imap.capabilities`
+  keeps the list read before authentication, without `MOVE` or `UIDPLUS`, so no handled
+  message was ever filed (it stayed in the INBOX, flagged Seen). Python 3.14, used for
+  the tests of 2026-09-20, refreshes the list. `_capabilities` asks the server with
+  `CAPABILITY` when the client's list has neither.
 - **Automated mail is ignored** (#65, RFC 3834). A tagged message with an
   `Auto-Submitted` header other than `no`, or `Precedence: bulk`, `list` or
   `junk`, creates no access request and gets no reply, even from an

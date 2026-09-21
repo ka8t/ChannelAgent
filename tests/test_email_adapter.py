@@ -163,6 +163,9 @@ class _FakeIMAP:
     def login(self, *a):
         return "OK", []
 
+    def capability(self):
+        return "OK", [" ".join(self.capabilities).encode()]
+
     def select(self, *a):
         return "OK", [b"1"]
 
@@ -607,3 +610,30 @@ async def test_unknown_telegram_sender_still_gets_the_denial_reply(fresh_db):
     async with session_scope() as session:
         await dispatch_event(session, NormalizedEvent("424242", Channel.TELEGRAM, "hi", reply))
     assert sent == [DENIED_MESSAGE]
+
+
+def test_capabilities_are_asked_of_the_server_when_the_client_list_predates_login(fake_imap):
+    """Python 3.12 keeps the capabilities read before authentication (no MOVE, no UIDPLUS):
+    the message was never filed (live mailbox, 2026-09-21).
+    """
+    fake = fake_imap({b"12": _raw(*TAGGED)})
+    fake.capabilities = ("IMAP4REV1", "AUTH=PLAIN")
+    fake.capability = lambda: ("OK", [b"IMAP4rev1 MOVE UIDPLUS NAMESPACE"])
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.moves == [(b"12", "INBOX.Agent")], "moved although the client list had no MOVE"
+
+
+def test_a_server_that_really_has_no_move_or_uidplus_still_moves_nothing(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)})
+    fake.capabilities = ("IMAP4REV1",)
+    fake.capability = lambda: ("OK", [b"IMAP4rev1"])
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.moves == [] and fake.copies == [] and set(fake.messages) == {b"12"}
+
+
+def test_capability_names_are_matched_whatever_their_case(fake_imap):
+    fake = fake_imap({b"12": _raw(*TAGGED)})
+    fake.capabilities = ("IMAP4REV1",)
+    fake.capability = lambda: ("OK", [b"imap4rev1 Move uidplus"])
+    _finalize_message(b"12", "INBOX.Agent")
+    assert fake.moves == [(b"12", "INBOX.Agent")]

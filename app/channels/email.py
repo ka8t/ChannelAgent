@@ -101,6 +101,23 @@ def _ensure_folder(imap: imaplib.IMAP4, folder: str) -> bool:
     return True
 
 
+def _capabilities(imap: imaplib.IMAP4) -> tuple[str, ...]:
+    """What the server supports after login. Under Python 3.12 (the image),
+    `imap.capabilities` keeps the list read before authentication, which has neither MOVE
+    nor UIDPLUS, so no message was ever filed (found on the live mailbox, 2026-09-21).
+    Python 3.14 refreshes it. When the client's list lacks both, ask the server.
+    """
+    caps = tuple(getattr(imap, "capabilities", ()) or ())
+    if not {"MOVE", "UIDPLUS"} & set(caps):
+        try:
+            typ, data = imap.capability()
+            if typ == "OK" and data and data[0]:
+                caps = tuple(data[0].decode().upper().split())
+        except (imaplib.IMAP4.error, OSError):
+            logger.debug("CAPABILITY failed, using the client's list", exc_info=True)
+    return caps
+
+
 def _move_message(imap: imaplib.IMAP4, uid: bytes, folder: str) -> bool:
     """File one message, addressed by UID, into `folder`.
 
@@ -110,7 +127,7 @@ def _move_message(imap: imaplib.IMAP4, uid: bytes, folder: str) -> bool:
     expunged yet. Without UIDPLUS (needed for UID EXPUNGE) nothing is
     moved at all.
     """
-    caps = getattr(imap, "capabilities", ())
+    caps = _capabilities(imap)
     if "MOVE" in caps and "MOVE" in imaplib.Commands:
         typ, _ = imap.uid("MOVE", uid, folder)
         return typ == "OK"
