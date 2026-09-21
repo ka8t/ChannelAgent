@@ -135,6 +135,19 @@ the above — this section is only the *what's left*.
      HTTP status code (not "auth works"). A prose description of what
      was checked is not sufficient on its own, even when the check was
      real — the reported number is the artifact that makes it checkable.
+- **Test scope: no full test suite per issue (user, 2026-09-21).** The full
+  suite takes 85 to 105 seconds (903 tests on 2026-09-21), targeted tests 1 to
+  12 seconds. While working on an issue: run the tests of the touched file and
+  its neighbours, `ruff` on the changed files, and the mutation checks; never
+  the full suite. Run the full suite **once per batch, before a commit** (when
+  the user says "commit"), and also after changing shared code (`conftest.py`,
+  `app/db`, `app/config.py`, `app/main.py`, `start.sh`). Why it stays: on
+  2026-09-21 the full run caught 22 `test_restore.py` failures that targeted runs
+  never showed (the tests depended on a real `channelagent` Docker container
+  running on the machine). A closing comment quotes the last full-suite number
+  of the pushed commit; it does not re-run the suite for a number already
+  measured on the same code. CI is disabled (owner's decision, 2026-09-21), so
+  this local run is the only full run.
 - **Verify on the Mac natively first, always, before a VPS/remote or
   GPU-less environment.** User's instruction (2026-09-18): the Mac is
   faster to iterate against (Metal acceleration) — confirm there
