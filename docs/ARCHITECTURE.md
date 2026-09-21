@@ -553,6 +553,13 @@ rotation and the restore commands:
    `ENCRYPTION_KEY`, `EMAIL_PASSWORD`, `MATRIX_BOT_ACCESS_TOKEN`, and the
    `OLD_ENCRYPTION_KEY` given to a rotation) of 8 characters or more, becomes
    `<redacted>` in the message, its arguments, the traceback and the stack.
+A record that holds nothing to hide is left exactly as it was. One that does keeps
+its structure (format string and tuple of arguments, with the string parts
+scrubbed) because some formatters read `record.args` themselves: uvicorn's
+access formatter broke on every request when the arguments were flattened to
+`None` (#84). It is flattened to plain text only when a secret would still be
+visible after that (a secret inside a non-string argument, a mapping-style
+record).
 Anything that displays configuration (`--show-config`) masks secrets on its own.
 If a secret was ever displayed, rotate it: the Telegram token through BotFather
 (`/revoke`), then `./start.sh --set TELEGRAM_BOT_TOKEN=...`.

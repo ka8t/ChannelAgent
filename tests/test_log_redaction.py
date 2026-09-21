@@ -157,6 +157,77 @@ def test_installing_twice_does_not_wrap_the_factory_again(scrubbing):
     assert out.getvalue().count("<redacted>") == 1
 
 
+# --- records must keep working with structured formatters (#84) ---
+
+
+def _uvicorn_access_logger():
+    """uvicorn's own access logger with uvicorn's own formatter, as it runs in production."""
+    from uvicorn.logging import AccessFormatter
+
+    stream = io.StringIO()
+    problems: list = []
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(
+        AccessFormatter('%(client_addr)s - "%(request_line)s" %(status_code)s', use_colors=False)
+    )
+    handler.handleError = lambda record: problems.append(record)
+    logger = logging.getLogger("uvicorn.access")
+    _touched.append((logger, logger.handlers, logger.level, logger.propagate))
+    logger.handlers, logger.propagate = [handler], False
+    logger.setLevel(logging.INFO)
+    return logger, stream, problems
+
+
+def test_a_uvicorn_access_line_is_formatted_and_not_an_error(scrubbing):
+    logger, stream, problems = _uvicorn_access_logger()
+    logger.info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "GET", "/users", "1.1", 401)
+    assert problems == [], "the formatter could not read the record"
+    assert stream.getvalue().strip().startswith('127.0.0.1:5000 - "GET /users HTTP/1.1" 401')
+
+
+def test_a_uvicorn_access_line_holding_a_token_is_redacted_and_still_formatted(scrubbing):
+    logger, stream, problems = _uvicorn_access_logger()
+    logger.info(
+        '%s - "%s %s HTTP/%s" %d', "127.0.0.1:5000", "POST", f"/bot{TOKEN}/getMe", "1.1", 200
+    )
+    assert problems == []
+    text = stream.getvalue()
+    assert TOKEN not in text and "AAHfake" not in text
+    assert 'POST /bot<redacted>/getMe HTTP/1.1" 200' in text
+
+
+def test_a_record_with_nothing_to_scrub_keeps_its_message_and_arguments(scrubbing):
+    seen = []
+
+    class Grab(logging.Handler):
+        def emit(self, record):
+            seen.append((record.msg, record.args))
+
+    logger = logging.getLogger("test.untouched")
+    _touched.append((logger, logger.handlers, logger.level, logger.propagate))
+    logger.handlers, logger.propagate = [Grab()], False
+    logger.setLevel(logging.INFO)
+    logger.info("%s items in %s", 3, "a room")
+    assert seen == [("%s items in %s", (3, "a room"))]
+
+
+def test_a_record_with_a_secret_in_a_non_string_argument_is_still_scrubbed(scrubbing):
+    logger, out = _capture()
+
+    class Holder:
+        def __str__(self):
+            return f"holder({TOKEN})"
+
+    logger.info("value %s", Holder())
+    assert TOKEN not in out.getvalue() and "<redacted>" in out.getvalue()
+
+
+def test_a_mapping_style_record_is_scrubbed(scrubbing):
+    logger, out = _capture()
+    logger.info("who %(who)s", {"who": TOKEN})
+    assert TOKEN not in out.getvalue() and "<redacted>" in out.getvalue()
+
+
 # --- uncaught exceptions are printed by the interpreter, not by logging ---
 
 
@@ -241,6 +312,11 @@ def test_the_configured_secrets_come_from_the_settings(monkeypatch):
 
 
 def test_the_real_application_never_prints_a_token_shaped_secret(tmp_path):
+    import socket
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
     env = {k: v for k, v in os.environ.items() if not k.startswith(("DATABASE_", "CHECKPOINT_"))}
     env.update(
         PYTHONPATH=str(REPO),
@@ -248,7 +324,7 @@ def test_the_real_application_never_prints_a_token_shaped_secret(tmp_path):
         TELEGRAM_BOT_TOKEN=TOKEN,
         EMAIL_IMAP_HOST="",
         API_SERVER_KEY=API_KEY,
-        API_SERVER_PORT="8799",
+        API_SERVER_PORT=str(port),
         MIGRATION_BACKUPS_KEEP="0",
     )
     proc = subprocess.Popen(
@@ -259,7 +335,14 @@ def test_the_real_application_never_prints_a_token_shaped_secret(tmp_path):
         stderr=subprocess.STDOUT,
         text=True,
     )
-    time.sleep(12)  # long enough for start-up and the first Bot API calls
+    answered = None
+    deadline = time.time() + 30
+    while time.time() < deadline and answered is None:  # start-up and the first Bot API calls
+        try:
+            answered = httpx.get(f"http://127.0.0.1:{port}/users", timeout=2).status_code
+        except httpx.HTTPError:
+            time.sleep(0.5)
+    time.sleep(6)
     proc.send_signal(signal.SIGINT)
     try:
         output, _ = proc.communicate(timeout=30)
@@ -267,8 +350,11 @@ def test_the_real_application_never_prints_a_token_shaped_secret(tmp_path):
         proc.kill()
         output, _ = proc.communicate()
     assert "ChannelAgent started" in output, output[-500:]
+    assert answered == 401
     assert TOKEN not in output and "AAHfake" not in output
     assert API_KEY not in output
+    assert '"GET /users HTTP/1.1" 401' in output, "the access line is printed"
+    assert "Logging error" not in output, output[-800:]
 
 
 def test_every_entry_point_installs_the_scrubbing():

@@ -54,10 +54,36 @@ def scrub(text: str) -> str:
     return _TELEGRAM_TOKEN.sub(REDACTED, text)
 
 
+def _replace_message(record: logging.LogRecord, scrubbed: str) -> None:
+    """Make `record` print `scrubbed` instead of its message.
+
+    The record keeps its structure (a format string and a tuple of arguments)
+    when it can: uvicorn's access formatter reads its five values from
+    `record.args`, and flattening them to None broke every access line (#84).
+    It is flattened to plain text only when a secret would still be visible
+    after scrubbing the string parts (a secret inside a non-string argument, a
+    mapping-style record).
+    """
+    if isinstance(record.args, tuple) and record.args and isinstance(record.msg, str):
+        old_msg, old_args = record.msg, record.args
+        record.msg = scrub(old_msg)
+        record.args = tuple(scrub(a) if isinstance(a, str) else a for a in old_args)
+        try:
+            formatted = record.getMessage()
+        except Exception:
+            formatted = None
+        if formatted is not None and scrub(formatted) == formatted:
+            return
+        record.msg, record.args = old_msg, old_args
+    record.msg = scrubbed
+    record.args = None
+
+
 def _scrub_record(record: logging.LogRecord) -> None:
     message = record.getMessage()  # may raise on a bad format: the caller leaves the record alone
-    record.msg = scrub(message)
-    record.args = None
+    scrubbed = scrub(message)
+    if scrubbed != message:  # nothing to hide: the record is left exactly as it was
+        _replace_message(record, scrubbed)
     if record.exc_info and not record.exc_text:
         record.exc_text = scrub(logging.Formatter().formatException(record.exc_info))
     if record.stack_info:
