@@ -58,3 +58,13 @@ async def isolated_checkpoints(tmp_path, monkeypatch):
     from app import graph
 
     await graph.close_graph()
+
+
+@pytest.fixture(autouse=True)
+def isolated_heartbeat(tmp_path, monkeypatch):
+    """The healthcheck heartbeat file (#48) lives in the test's own directory,
+    never in the machine's temp directory.
+    """
+    from app import health
+
+    monkeypatch.setattr(health, "HEARTBEAT_PATH", tmp_path / "channelagent.heartbeat")

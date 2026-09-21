@@ -61,7 +61,7 @@ async def world(fresh_db):
 def turns(monkeypatch):
     calls: list[tuple[int, str]] = []
 
-    async def fake_turn(channel, user_id, agent_id, text):
+    async def fake_turn(channel, user_id, agent_id, text, **_kwargs):
         calls.append((agent_id, text))
         return f"answer from agent {agent_id}"
 

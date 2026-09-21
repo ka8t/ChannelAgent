@@ -373,7 +373,7 @@ async def test_a_deactivated_agent_gets_a_refusal_and_no_llm_call(fresh_db, monk
 
     calls = []
 
-    async def fake_turn(channel, user_id, agent_id_, text):
+    async def fake_turn(channel, user_id, agent_id_, text, **_kwargs):
         calls.append(text)
         return "answer"
 
@@ -410,9 +410,26 @@ async def test_approving_a_request_whose_identity_already_exists_grants_chat_wit
 ):
     """Found on the real database: the request was made, then an admin added
     the same identity by hand. Approving must not crash (it did: HTTP 500).
+    Since #65 adding the identity through the service resolves the request, so
+    this state is built by writing the row directly, as the old data was.
     """
-    uid = await _user(api, "Already there")
-    await _identity(api, uid, identifier="777")
+    from app.db.models import ChannelIdentity, User
+    from app.db.session import session_scope
+    from app.security.hashing import channel_identifier_key
+
+    async with session_scope() as session:
+        user = User(display_name="Already there")
+        session.add(user)
+        await session.flush()
+        session.add(
+            ChannelIdentity(
+                user_id=user.id,
+                channel=Channel.TELEGRAM,
+                external_id=channel_identifier_key(Channel.TELEGRAM, "777"),
+            )
+        )
+        await session.commit()
+        uid = user.id
     r = await api.post("/requests/1/approve", headers=AUTH)
     assert r.status_code == 200 and r.json()["id"] == uid
     assert _sql("select count(*) from users")[0][0] == 1, "no second user"

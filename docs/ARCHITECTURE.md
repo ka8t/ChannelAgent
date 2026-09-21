@@ -132,6 +132,14 @@ How the guarantees are enforced (`app/channels/email.py`):
   Seen when `EMAIL_AGENT_FOLDER` is empty), and each failure has an audit
   entry with status `failed`. One message that raises does not stop the
   others in the same poll.
+- **Automated mail is ignored** (#65, RFC 3834). A tagged message with an
+  `Auto-Submitted` header other than `no`, or `Precedence: bulk`, `list` or
+  `junk`, creates no access request and gets no reply, even from an
+  authorized sender (an out-of-office answer to the bot's own reply would
+  otherwise start a loop). It is not sent to the model; it is marked Seen and
+  filed into `<EMAIL_AGENT_FOLDER>` so it is not fetched again. The bot's own
+  replies carry `Auto-Submitted: auto-replied`, so another robot ignores them
+  the same way.
 - An empty tag, or one with non-ASCII characters, quotes or backslashes,
   is refused: the adapter does not start. An empty tag never means
   "process everything".
@@ -248,7 +256,16 @@ the message and returns to its menu.
   added it by hand after the request), it is granted `chat` and no second
   user is created. Resolving records who did it in `resolved_by`: `api` or
   `console` (there is one shared key and no admin identity). A request that is
-  already resolved answers 409, an unknown one 404.
+  already resolved answers 409, an unknown one 404. **Creating the identity
+  or granting it a permission resolves its pending request** (#65): the
+  request becomes `approved`, `resolved_by` is `api` or `console`, and an
+  admin event `request.auto_approve` is recorded. Only pending requests of
+  that same channel and identity are touched; a denied one stays denied.
+  There is one request row per (channel, identity) whatever its status (#85):
+  a **denied** person who writes again keeps the denial (same row, no new
+  admin notification, the normal denial reply); an **approved** person whose
+  identity was removed or permission revoked reopens the same row as
+  `pending` with the new first message and the admins are told once.
 - **Agents.** Names are unique per user (409), 1 to 100 characters (422). A
   **deactivated agent does not answer**: the user gets a fixed notice, the
   message is recorded with status `denied` and the LLM is not called.
@@ -323,6 +340,45 @@ that terminates TLS in front of it, on the same host, forwarding to the
 loopback address. Only widen `API_BIND_ADDRESS` or `API_SERVER_HOST` when
 a TLS proxy on another host has to reach it.
 
+**Reference TLS proxy (#60), built and tested.** `docker-compose.tls.yml` adds
+a Caddy container (`docker/Caddyfile`) on top of the development compose file:
+
+```
+docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.tls.yml cp \
+    tls-proxy:/data/caddy/pki/authorities/local/root.crt ./root.crt
+curl --cacert root.crt -H "Authorization: Bearer $API_SERVER_KEY" https://localhost:8443/users
+```
+
+Caddy terminates TLS on port 8443 with `tls internal` (a certificate from its
+own local certificate authority, kept in the `tls_proxy_data` volume) and
+forwards to `channelagent:<API_SERVER_PORT>` on the internal Docker network.
+The API keeps its loopback-only publishing; the proxy is published on
+`127.0.0.1:${TLS_PORT:-8443}` until `TLS_BIND_ADDRESS` is set. Clients must
+trust `root.crt` (`curl --cacert`, or import it). Variables: `TLS_SITE_ADDRESS`
+(default `localhost`, the name in the certificate), `TLS_PORT`,
+`TLS_BIND_ADDRESS`. Behind the proxy every client appears to the API with the
+proxy's address, so the failed-authentication limit above applies to all of
+them together.
+
+Verified on 2026-09-21 in a sandbox copy of the project (own `.env`, own
+ports, throwaway key, real containers; the owner's stack was not touched),
+from the machine's LAN address 192.168.1.77:
+
+| Request | Result |
+|---|---|
+| HTTPS `:8443`, `--cacert`, no key / wrong key / right key | `401` / `401` / `200` |
+| HTTPS `:8443` without `--cacert` | curl exit 60 (certificate not trusted) |
+| plain HTTP to `:8443` | `400` (Caddy answers "HTTP to an HTTPS port", serves no data) |
+| HTTPS to the LAN address `:8443`, default publishing | connection refused (curl exit 7) |
+| the API port `:8794` on the LAN address | connection refused (curl exit 7) |
+| control, `TLS_BIND_ADDRESS=0.0.0.0`: LAN HTTPS no key / right key | `401` / `200` (the check does detect an exposed proxy) |
+
+Not tested: a public name with an automatic certificate (`tls internal`
+replaced by Caddy's default, ports 80 and 443 published), and the SSH tunnel
+command (no SSH server runs on the development Mac). Both are recipes on
+paper until run on a host that has them.
+
 Verified on 2026-09-20, from the loopback address and from the machine's
 own LAN address: default Docker publishing answers `401` (no key) and
 `200` (key) on loopback and refuses the connection on the LAN address;
@@ -339,9 +395,39 @@ all of that unreadable for good**: keep a copy of the key in a password
 manager, apart from the data. Restoring a backup of the database needs the key
 that was current when the backup was made.
 
-**Rotating the key** (`python -m app.admin.rekey`, #67). The new key is the one
-in `.env`, the old one is passed in `OLD_ENCRYPTION_KEY`. With the application
-stopped:
+**Rotating the key, guided (`./start.sh --rekey`, #78).** With the application
+stopped (`./start.sh --stop`), one command runs the whole sequence in the right
+order: it refuses while the application runs (API port, database lock, container);
+reads the current key from `.env` (it becomes the old key, held in memory) and
+generates the new one; **dry run** with the counts per table and the number of
+unreadable values, and stops if any is unreadable unless `--allow-unreadable`;
+asks you to type `ROTATE` (`--yes` skips it, `--dry-run` stops after the counts);
+copies `.env` to `.env.pre-rekey` (mode 600), puts the new key in `.env` and
+re-encrypts (the tool of #67 first copies both databases into `backups/`);
+then reads every value back **in a fresh process that takes the key from `.env`**,
+as the application does. Keys are never printed: the new one is in `.env`, from
+where you copy it to a password manager. If the rotation fails before anything
+was rewritten, `.env` is restored; if it fails after some data moved, both keys
+are kept and the message says how to finish (`OLD_ENCRYPTION_KEY` from
+`.env.pre-rekey`, then `python -m app.admin.rekey`, safe to run twice). It refuses
+to run while `.env.pre-rekey` exists (it may hold the only key that opens an
+earlier prerekey backup): delete or move it yourself once you are done with it.
+Nothing is ever deleted by the tool: `.env.pre-rekey` and the `*-prerekey-*`
+copies are removed by you, after the new key is stored and the application has run
+fine. The old key stays in `.env.pre-rekey` on purpose: without it the prerekey
+copies cannot be read.
+
+Rehearsed on 2026-09-21 through `./start.sh --rekey` in a sandbox holding a
+consistent copy of the real data (real key, real files, nothing shared with the
+running application): 72 values (28 + 2 + 1 + 1 application values, 19 + 21
+checkpoint payloads) re-encrypted, 0 still readable with the old key, read-back
+0 unreadable; an independent script read all 32 application values with the new
+key and 0 with the old one; the old key appeared in no output and in no file but
+`.env.pre-rekey`, the new key in `.env` only (modes 600).
+
+**Rotating the key by hand** (`python -m app.admin.rekey`, #67). The new key is
+the one in `.env`, the old one is passed in `OLD_ENCRYPTION_KEY`. With the
+application stopped:
 
 ```bash
 docker compose down                                   # 1. stop it
@@ -411,6 +497,34 @@ are found. That is O(n) in the number of rows left by the other filters,
 which is fine for a single user or a small group. No index is built on
 purpose: narrow with user, agent, channel or dates first on a large log.
 
+**Measured speed (#56).** `scripts/bench_log_search.py` (repeatable, builds
+a throwaway database, rows of about 300 characters, Fernet-encrypted like
+real ones) times `search_action_logs` with `limit=20`, median of 3 runs.
+Measured 2026-09-21 on the development Mac (Apple M1, Python 3.14; not
+re-measured in the Linux container):
+
+| Rows | Best case (keyword in every row) | Worst case (keyword matches nothing) |
+|---|---|---|
+| 1,000 | 7.2 ms | 14.8 ms |
+| 10,000 | 7.1 ms | 135.2 ms |
+| 100,000 | 7.3 ms | 1,417.8 ms |
+
+The best case does not grow with the log. The worst case grows linearly, at
+about 14 microseconds per row. It is also the cost of a keyword found in
+fewer than `limit` rows, because the search keeps reading until it has
+`limit` matches or runs out of rows. **Threshold: revisit the O(n) design
+when a full scan passes one second, that is at about 70,000 rows without
+other filters** (1.4 s measured at 100,000). Narrowing by user, agent,
+channel or dates before the keyword shrinks n. Until then no index or search
+infrastructure is built.
+
+**Ordering: by `id`, not by `created_at` (decision recorded on #56).** Rows
+are written in order with `created_at` taken at insertion, so `id` order is
+chronological today, and `id` gives cheap keyset paging (`id < last_id`).
+Caveat: rows whose `created_at` was not set at insertion time (a future
+import, a clock set backwards) would not come out chronologically; ordering
+by `(created_at, id)` would have to replace it then.
+
 `GET /logs` returns the decrypted text, so it is only served behind the
 `API_SERVER_KEY` bearer check like every other route.
 
@@ -435,9 +549,22 @@ adapter can decide about retrying.
 
 `status` is a column of `action_logs` (Alembic migration `bcf3aa387f5e`,
 existing rows are `ok`) and can be filtered in `GET /logs` and in the
-console. Known limit: when the answer was generated but the reply could
-not be delivered, an email retry runs the turn again and the
-conversation history gains a duplicate turn.
+console.
+
+**Undelivered answers are retried without a new turn (#64).** When the
+answer was generated but delivery failed, `dispatch_event` returns
+`DispatchOutcome.UNDELIVERED` (the outbound entry keeps the answer with status
+`failed`). On the email retry (`retry=True`) it looks the answer up in the audit
+trail (`service.find_undelivered_answer`: the first outbound entry after the
+newest inbound entry with the same text, if its status is `failed` and its text is
+not the apology or the "no reply" note) and sends that text again. The model is
+not called, the conversation history gains no second turn, and on success the
+same entry turns `ok` (no second outbound entry). Nothing is kept in memory, so
+a restart does not lose the answer. The attempt bound is the same as for a
+failed turn (3, then the message is filed in the failed folder). Known limits:
+two messages with the same text from the same sender can be mistaken for one
+another; and a *failed turn* (no answer) that is retried still appends its
+user message to the history again, as described under "Failed turns".
 
 ### Resetting a conversation that cannot be read (#63)
 
@@ -461,6 +588,34 @@ each time. An administrator resets it without touching SQL:
 - A turn whose LLM call failed leaves its user message in the history (the
   checkpoint is written before the model runs), so a retry after a reset
   can start with that message already present.
+
+### start.sh --status and --stop (#77)
+
+`./start.sh --status` prints one line each for the container, the native
+application, the Admin API and `llama-server`. The API counts as up when
+`http://127.0.0.1:<API_SERVER_PORT>/users` answers 200, 401 or 429 (401 is the
+API refusing an unauthenticated request, which is what it should do), and as
+disabled when `API_SERVER_KEY` is empty. `llama-server` is up when `/health`
+answers 200, and is reported as "started by start.sh" only when
+`.llama-server.pid` names a live process whose command line contains
+`llama-server`.
+
+`./start.sh --stop [--all]` stops the native application (`.app.pid`, written
+by `--native` just before `exec`, so it is the application's own pid) and runs
+`docker compose stop channelagent` when that service is running; `--all` also
+stops the `llama-server` that `start.sh` started. **A process is only signalled
+when it is alive and its command line matches what the script started**
+(`app.main`, `llama-server`): a pid file that names something else is reported
+and left alone (and kept), and a stale file naming no process is removed. A
+process that has exited but is not reaped yet (state `Z`) counts as stopped.
+`llama-server` is left running without `--all`, because reloading the model is
+slow. `--set` prints that the change applies at the next start and restarts
+nothing (a restart would interrupt live conversations).
+
+Known limits: the container is stopped through Docker Compose of the current
+directory, so a container started by another Compose project is not seen; a
+native application started by hand (not through `start.sh --native`) has no
+pid file and is not found.
 
 ### start.sh --set and the encryption key (#74)
 
@@ -535,6 +690,67 @@ the reason, the process logs "Every component has stopped" and exits with code
 counts as stopped). A stopped adapter is not retried: a rejected token does not
 become valid by itself, and the adapters' polling loops already retry transient
 network errors.
+
+### Container user (#70)
+
+The image no longer runs the application as root. It creates the system user
+and group `channelagent` with the **fixed** uid and gid `10001`, owns
+`/app/data` by it, and ends with `USER 10001:10001`. The code (`/app/app`,
+migrations) stays owned by root, so the application cannot modify its own
+code. The uid is fixed, not configurable, so the host-side ownership below is
+predictable.
+
+**Host-side ownership of `./data`** (the bind mount in `docker-compose.yml`):
+- *Linux Docker Engine* (the production target): the directory must belong
+  to uid 10001, otherwise the application stops at startup. It says so:
+  `The data directory ... is not writable by uid 10001. ... chown -R 10001:10001
+  <host data directory>`. Run `sudo chown -R 10001:10001 data` once. An empty
+  named volume needs nothing: Docker gives it the image directory's owner.
+- *Docker Desktop (macOS, Windows)*: nothing to do; the file sharing layer
+  lets uid 10001 read and write the existing files of the host user.
+- *Fresh clone with no `data/`*: if `data/` does not exist, Docker creates it
+  owned by root and the application cannot write to it (found by the TLS
+  rehearsal, 2026-09-21). `./start.sh` creates it first as the current user, and
+  on Linux warns with the `chown` command. Running `docker compose up` by hand in
+  a fresh clone: `mkdir data` first.
+- *Native run* (`./start.sh --native`) is unchanged: files belong to the user
+  who runs it.
+
+Verified on 2026-09-21 on the local Docker (Docker Desktop, image built from
+this tree): `docker run --rm --entrypoint id <image>` prints
+`uid=10001(channelagent) gid=10001(channelagent)`; on a fresh named volume the
+application reached `healthy`, created `channelagent.db` and `checkpoints.db`
+(files `-rw-------`, owner 10001) at Alembic revision `9dbfacca49a4`; on a
+consistent copy of the real `data/` (bind mount, files created by the host
+user, mode 600) it reached `healthy` at the same revision and read its 2
+users; a real completion from inside the container through
+`host.docker.internal:8080` returned `'ok'` as uid 10001; with the data
+directory owned by root (a `tmpfs` stand-in for a Linux bind mount) it exited
+with status 1 (`unable to open database file`; the clearer message above was
+added after that run and is covered by a unit test) and with the directory
+owned by 10001 it reached `healthy`. A CI step asserts the uid is 10001, not 0
+(`.github/workflows/ci.yml`); CI is disabled at the owner's request, so that
+step has not run.
+
+### Container healthcheck (#48)
+
+The image declares a `HEALTHCHECK` (30 s interval, 60 s start period, 3
+retries) that runs `python -m app.health`. While the application runs,
+`app/health.py::heartbeat` touches `<tmp>/channelagent.heartbeat` every 15
+seconds, and only while at least one component (adapter, Admin API) is still
+running, or while the application idles on purpose with none enabled. The
+command succeeds when the file is at most 60 seconds old. No port and no data
+are involved, so it works with or without `API_SERVER_KEY`. `docker compose
+ps` shows `healthy` or `unhealthy`. Measured on a throwaway container:
+`healthy` 10 s after start; after freezing the process (`docker kill
+--signal=SIGSTOP`) `unhealthy` with `last heartbeat 61 s ago (limit 60 s)`.
+
+Known limits: `restart: unless-stopped` restarts a container that exits, not
+one that turns `unhealthy` (Docker only reports it; a supervisor such as
+Docker Swarm, or an external monitor, has to act on it). The check proves the
+process and its event loop are alive, not that Telegram or the mailbox
+answer: a component that is running but stuck on the network still reads as
+healthy.
 
 ### No secret in a log (#82)
 
@@ -674,11 +890,30 @@ target type, target id, details.
 `GET /storage` on the Admin API and menu 5 of the console (#40) call one
 function, `app.admin.service.storage_overview`. It reports the size of
 the SQLite file (the main database file only, nothing for a database that
-is not a SQLite file), the exact `COUNT(*)` of every table (`users`,
-`channel_identities`, `permissions`, `access_requests`, `agents`,
-`action_logs`) and the oldest and newest audit-trail timestamps in UTC
-(none while the log is empty). The API leaves the file path out on
-purpose. This is visibility, not a storage engine or a backup tool.
+is not a SQLite file), the exact `COUNT(*)` of every table of the main
+database (`users`, `channel_identities`, `permissions`, `access_requests`,
+`agents`, `action_logs`, `admin_events`) and the oldest and newest
+audit-trail timestamps in UTC (none while the log is empty). The API leaves
+the file path out on purpose. This is visibility, not a storage engine or a
+backup tool.
+
+**No silent drift (#57).** The counted tables are `service._COUNTED_MODELS`;
+`service.STORAGE_EXCLUDED_TABLES` lists the tables left out on purpose (only
+`alembic_version`). `tests/test_storage_checkpoints.py` fails when the schema
+(the models) or the migrated database holds a table that is in neither, so a
+new table must be counted or excluded in the same change.
+
+**Conversation checkpoints (#57).** They live in their own SQLite file (see
+"LangGraph orchestrator"), usually the largest consumer of space. The overview
+adds `checkpoint_size_bytes` (`checkpoints.db` plus its `-wal` and `-shm`
+files, summed, since the WAL holds recent writes) and
+`checkpoint_row_counts` (`checkpoints` and `writes`, the two LangGraph tables),
+in `GET /storage` and in console menu 5. The file is read with a read-only
+connection and is never created by the overview; if it does not exist yet the
+values are `null` and empty, and an unreadable file reports its size with no
+row counts. Measured on the real files on 2026-09-21: 263,160 bytes (61,440 +
+168,952 + 32,768 by `stat`), 19 `checkpoints` rows and 21 `writes` rows, equal
+to a direct `sqlite3` count.
 
 ### Referential integrity and deleting users
 
@@ -762,8 +997,17 @@ the checkpoint ids stay readable.
   the other threads are not affected.
 - Purging a user (`DELETE /users/{id}?purge=true`) deletes their
   conversation threads too.
-- The history is not trimmed yet: a very long thread will eventually
-  exceed the model's context window ([#47](https://github.com/ka8t/ChannelAgent/issues/47)).
+- **The history sent to the model is windowed** ([#47](https://github.com/ka8t/ChannelAgent/issues/47)).
+  `app/graph.py::window_messages` keeps the most recent turns that fit in
+  75% of `LLAMA_CTX_SIZE` (the rest is left for the reply and for the error
+  of the estimate), starts the window on a user message, and always keeps
+  the latest message, even alone above the budget. Only the request is
+  cut: the checkpoint keeps the whole history and the audit trail
+  (`action_logs`) is untouched. Known limits: tokens are estimated at
+  about 4 characters each (langchain's `count_tokens_approximately`), not
+  counted with the model's tokenizer, and the model forgets what is
+  outside the window (no summary of the dropped turns). A single message
+  larger than the context window still fails.
 
 ### Compute topology
 

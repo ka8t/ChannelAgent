@@ -3,8 +3,10 @@ interactive CLI (#41) and the Admin API both call these functions —
 neither re-implements the DB queries itself.
 """
 
+import asyncio
 import enum
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -31,6 +33,8 @@ from app.db.session import sqlite_file_path
 from app.db.types import UndecryptableText
 from app.security.auth import grant_permission, revoke_permission
 from app.security.hashing import channel_identifier_key
+
+logger = logging.getLogger("channelagent")
 
 DEFAULT_AGENT_NAME = "default"
 # Recorded when a caller does not say who acts. The API and the console
@@ -316,17 +320,33 @@ async def record_action(
 async def ensure_access_request(
     session: AsyncSession, channel: Channel, external_id: str, message_text: str
 ) -> tuple[AccessRequest, bool]:
-    """Upserts a pending request: one row per (channel, external_id), not one
-    per message from a still-unresolved identity. The flag says whether the
-    row was just created, so a caller can tell the admins exactly once (#53).
+    """One row per (channel, external_id), whatever its status (the table has a
+    unique constraint on it), not one per message. The flag says whether admins
+    should be told (#53), that is whether the request is new or was reopened.
+
+    - none yet: created pending, flag True.
+    - pending: returned as it is, flag False.
+    - denied (#85): the denial stands, returned as it is, flag False, so a
+      denied sender does not notify the admins with every message.
+    - approved, and the person writes again (their identity was removed or
+      their permission revoked since): reopened as pending with the new first
+      message, flag True.
     """
-    stmt = select(AccessRequest).where(
-        AccessRequest.channel == channel,
-        AccessRequest.external_id == external_id,
-        AccessRequest.status == RequestStatus.PENDING,
-    )
-    existing = (await session.execute(stmt)).scalar_one_or_none()
+    existing = (
+        await session.execute(
+            select(AccessRequest).where(
+                AccessRequest.channel == channel, AccessRequest.external_id == external_id
+            )
+        )
+    ).scalar_one_or_none()
     if existing is not None:
+        if existing.status == RequestStatus.APPROVED:
+            existing.status = RequestStatus.PENDING
+            existing.first_message_text = message_text
+            existing.resolved_at = None
+            existing.resolved_by = None
+            await session.flush()
+            return existing, True
         return existing, False
     req = AccessRequest(channel=channel, external_id=external_id, first_message_text=message_text)
     session.add(req)
@@ -427,6 +447,43 @@ async def deny_request(
         target_id=request_id,
         details={"channel": request.channel.value},
     )
+
+
+async def resolve_requests_for_identity(
+    session: AsyncSession, channel: Channel, external_id: str, *, actor: str
+) -> int:
+    """Approve the pending access request of an identity that an admin has just
+    created or granted a permission (#65): the decision was made, so the request
+    must not stay in the pending list. Returns how many were resolved.
+    """
+    pending = (
+        (
+            await session.execute(
+                select(AccessRequest).where(
+                    AccessRequest.channel == channel,
+                    AccessRequest.external_id == external_id,
+                    AccessRequest.status == RequestStatus.PENDING,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for request in pending:
+        request.status = RequestStatus.APPROVED
+        request.resolved_at = _utcnow()
+        request.resolved_by = actor
+        await record_admin_event(
+            session,
+            actor=actor,
+            action="request.auto_approve",
+            target_type="access_request",
+            target_id=request.id,
+            details={"channel": channel.value},
+        )
+    if pending:
+        await session.flush()
+    return len(pending)
 
 
 # --- Users, channel identities and permissions (#41, #35) ---
@@ -538,6 +595,7 @@ async def add_channel_identity(
         target_id=user_id,
         details={"channel": channel.value, "identity_id": identity.id},
     )
+    await resolve_requests_for_identity(session, channel, external_id, actor=actor)
     return identity
 
 
@@ -595,6 +653,9 @@ async def grant_identity_permission(
         target_type="user",
         target_id=user_id,
         details={"identity_id": identity_id, "kind": kind.value},
+    )
+    await resolve_requests_for_identity(
+        session, identity.channel, identity.external_id, actor=actor
     )
     return permission
 
@@ -718,6 +779,68 @@ async def search_action_logs(
         },
     )
     return found
+
+
+_UNDELIVERED_LOOKBACK = 50
+
+
+async def find_undelivered_answer(
+    session: AsyncSession,
+    user_id: int,
+    agent_id: int,
+    channel: Channel,
+    inbound_text: str,
+    not_answers: tuple[str, ...] = (),
+) -> ActionLog | None:
+    """The answer to this inbound message that was generated but not delivered
+    (#64), read back from the audit trail so a restart does not lose it.
+
+    Finds the newest of the last few inbound entries with this exact text, then
+    the first outbound entry after it: it is returned when its status is failed
+    and its text is a real answer (not one of `not_answers`, the apology and the
+    "no reply" note that a failed turn leaves). Returns None otherwise, and the
+    caller runs the turn. The inbound text is encrypted, so the comparison is
+    done in Python on a bounded window. Limit: two messages with the same text
+    from the same sender can be mistaken for one another.
+    """
+    inbound = (
+        await session.execute(
+            select(ActionLog)
+            .where(
+                ActionLog.user_id == user_id,
+                ActionLog.agent_id == agent_id,
+                ActionLog.channel == channel,
+                ActionLog.direction == Direction.INBOUND,
+            )
+            .order_by(ActionLog.id.desc())
+            .limit(_UNDELIVERED_LOOKBACK)
+        )
+    ).scalars()
+    entry = next((e for e in inbound if e.text == inbound_text), None)
+    if entry is None:
+        return None
+    answer = (
+        await session.execute(
+            select(ActionLog)
+            .where(
+                ActionLog.user_id == user_id,
+                ActionLog.agent_id == agent_id,
+                ActionLog.channel == channel,
+                ActionLog.direction == Direction.OUTBOUND,
+                ActionLog.id > entry.id,
+            )
+            .order_by(ActionLog.id.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if (
+        answer is None
+        or answer.status != ActionStatus.FAILED
+        or isinstance(answer.text, UndecryptableText)
+        or answer.text in not_answers
+    ):
+        return None
+    return answer
 
 
 async def _search_action_logs(
@@ -868,6 +991,11 @@ class StorageOverview:
     newest_log_at: datetime | None
     # Stored values that the current key cannot decrypt, per table (#55).
     undecryptable_by_table: dict[str, int] = field(default_factory=dict)
+    # The conversation checkpoints live in their own SQLite file (#49, #57):
+    # size of the file plus its -wal and -shm files, and rows per table.
+    # None / empty when that file does not exist yet or cannot be read.
+    checkpoint_size_bytes: int | None = None
+    checkpoint_row_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def undecryptable_rows(self) -> int:
@@ -883,6 +1011,42 @@ _COUNTED_MODELS = (
     ActionLog,
     AdminEvent,
 )
+
+
+# Tables of the main database that the overview deliberately does not count.
+# A guard test (#57) fails when the schema gains a table that is in neither
+# _COUNTED_MODELS nor this set, so the overview cannot drift silently.
+STORAGE_EXCLUDED_TABLES = frozenset({"alembic_version"})
+
+# Tables of the separate conversation-checkpoint file (created by LangGraph).
+CHECKPOINT_TABLES = ("checkpoints", "writes")
+
+
+def _checkpoint_stats() -> tuple[int | None, dict[str, int]]:
+    """Size (main file + WAL + shared-memory file) and row counts of the
+    checkpoint database, read without creating or changing it.
+    """
+    import sqlite3
+
+    from app.checkpoints import checkpoint_db_path
+
+    path = checkpoint_db_path()
+    if not path.exists():
+        return None, {}
+    files = (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm"))
+    size = sum(candidate.stat().st_size for candidate in files if candidate.exists())
+    counts: dict[str, int] = {}
+    try:
+        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        try:
+            for table in CHECKPOINT_TABLES:
+                counts[table] = con.execute(f'select count(*) from "{table}"').fetchone()[0]
+        finally:
+            con.close()
+    except sqlite3.Error:
+        logger.warning("The checkpoint database could not be read for the storage overview")
+        counts = {}
+    return size, counts
 
 
 # (table, encrypted column): every column that holds an encrypted value.
@@ -940,12 +1104,15 @@ async def storage_overview(session: AsyncSession) -> StorageOverview:
 
     path = sqlite_file_path(get_settings().database_url)
     size = path.stat().st_size if path is not None and path.exists() else None
+    checkpoint_size, checkpoint_counts = await asyncio.to_thread(_checkpoint_stats)
     return StorageOverview(
         db_size_bytes=size,
         row_counts=counts,
         oldest_log_at=_as_utc(oldest) if oldest is not None else None,
         newest_log_at=_as_utc(newest) if newest is not None else None,
         undecryptable_by_table=await count_undecryptable(session),
+        checkpoint_size_bytes=checkpoint_size,
+        checkpoint_row_counts=checkpoint_counts,
     )
 
 

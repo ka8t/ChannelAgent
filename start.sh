@@ -25,6 +25,18 @@
 # as a "before-restore" copy, then swaps it in:
 #   ./start.sh --restore [FILE] [--list] [--yes] [--allow-unreadable]
 #
+# And what runs, and how to stop it (#77):
+#   ./start.sh --status          -> app (container or native), Admin API,
+#                                    llama-server: up or down
+#   ./start.sh --stop [--all]    -> stop the native app or the container;
+#                                    with --all also the llama-server this
+#                                    script started. Only processes it can
+#                                    identify as its own are ever signalled.
+#
+# And the guided rotation of the encryption key (#78), application stopped:
+# dry run, confirmation, re-encryption with backups, read-back, what to delete:
+#   ./start.sh --rekey [--dry-run] [--yes] [--allow-unreadable]
+#
 # Both run modes need a native llama-server running on this Mac first
 # (Metal-accelerated inference). If it isn't already reachable on
 # LLAMA_PORT, this script starts it itself, using LLAMA_SERVER_BIN /
@@ -153,8 +165,8 @@ if key == "ENCRYPTION_KEY":
     if current.strip("'\"") != "":  # ENCRYPTION_KEY='' is empty
         print(
             "ENCRYPTION_KEY is already set and was NOT changed: replacing it would make every "
-            "encrypted value unreadable. Rotate it with the rotation tool, which re-encrypts the "
-            "data (python -m app.admin.rekey, see docs/ARCHITECTURE.md, "
+            "encrypted value unreadable. Rotate it with ./start.sh --rekey, which re-encrypts the "
+            "data (or python -m app.admin.rekey by hand, see docs/ARCHITECTURE.md, "
             "'Encryption key: backup, loss and rotation').",
             file=sys.stderr,
         )
@@ -203,6 +215,143 @@ with open(path, "w") as f:
     f.writelines(lines)
 PYEOF
   echo "==> Set ${key} in .env."
+  # Settings are read once, at startup. Nothing is restarted automatically:
+  # a restart would interrupt live conversations (#77).
+  echo "==> Applies at the next start: a running application keeps its old value until you restart it (./start.sh --stop, then ./start.sh)."
+}
+
+# --- What runs, and stopping it (#77) ---
+# A pid file alone is not enough to kill anything: a stale file can name a
+# process that has since been given to something else. A process counts as ours
+# only when it is alive AND its command line names what this script started.
+pid_alive() {  # a process that has exited but was not reaped yet (state Z) is not alive
+  local state
+  kill -0 "$1" 2>/dev/null || return 1
+  state="$(ps -p "$1" -o stat= 2>/dev/null | tr -d ' ')"
+  [ -n "$state" ] && [ "${state:0:1}" != "Z" ]
+}
+
+pid_is() {  # pid_is FILE PATTERN -> 0 when FILE holds a live pid whose command matches PATTERN
+  local file="$1" pattern="$2" pid
+  [ -f "$file" ] || return 1
+  pid="$(cat "$file" 2>/dev/null || true)"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  pid_alive "$pid" || return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -q -- "$pattern"
+}
+
+http_code() {  # http_code URL -> status code, 000 when nothing answers
+  curl -s -o /dev/null -w '%{http_code}' --max-time 3 "$1" 2>/dev/null || true
+}
+
+load_env_if_present() {
+  if [ -f .env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
+  fi
+}
+
+docker_running_container() {  # prints the id of this project's running channelagent container
+  command -v docker >/dev/null 2>&1 || return 1
+  docker compose ps --status running -q channelagent 2>/dev/null | head -n 1 | grep .
+}
+
+show_status() {
+  load_env_if_present
+  local llama_port="${LLAMA_PORT:-8080}" api_port="${API_SERVER_PORT:-8700}" code container
+  echo "==> ChannelAgent status"
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "  app (container)  : docker not available"
+  elif container="$(docker_running_container)"; then
+    echo "  app (container)  : running (${container:0:12})"
+  else
+    echo "  app (container)  : not running"
+  fi
+
+  if pid_is .app.pid "app.main"; then
+    echo "  app (native)     : running (pid $(cat .app.pid))"
+  else
+    echo "  app (native)     : not running"
+  fi
+
+  if [ -z "${API_SERVER_KEY:-}" ]; then
+    echo "  Admin API        : disabled (API_SERVER_KEY is not set)"
+  else
+    code="$(http_code "http://127.0.0.1:${api_port}/users")"
+    # 401 (no key sent) means the API is up and refusing, which is what it should do.
+    case "$code" in
+      200|401|429) echo "  Admin API        : up on 127.0.0.1:${api_port} (HTTP ${code})" ;;
+      *) echo "  Admin API        : down on 127.0.0.1:${api_port}" ;;
+    esac
+  fi
+
+  code="$(http_code "http://localhost:${llama_port}/health")"
+  if [ "$code" = "200" ]; then
+    if pid_is .llama-server.pid "llama-server"; then
+      echo "  llama-server     : up on port ${llama_port} (pid $(cat .llama-server.pid), started by start.sh)"
+    else
+      echo "  llama-server     : up on port ${llama_port} (not started by start.sh)"
+    fi
+  else
+    echo "  llama-server     : down on port ${llama_port}"
+  fi
+}
+
+stop_pid_file() {  # stop_pid_file LABEL FILE PATTERN
+  local label="$1" file="$2" pattern="$3" pid waited=0
+  if pid_is "$file" "$pattern"; then
+    pid="$(cat "$file")"
+    kill "$pid"
+    while pid_alive "$pid" && [ "$waited" -lt 30 ]; do
+      sleep 0.5
+      waited=$((waited + 1))
+    done
+    if pid_alive "$pid"; then
+      echo "!! ${label} (pid ${pid}) did not stop within 15 s; it was sent SIGTERM only." >&2
+      return 1
+    fi
+    rm -f "$file"
+    echo "==> ${label} stopped (pid ${pid})."
+  elif [ -f "$file" ]; then
+    pid="$(cat "$file" 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && pid_alive "$pid"; then
+      echo "!! ${file} names pid ${pid}, which is not ${label} (its command line does not match): left alone." >&2
+    else
+      rm -f "$file"
+      echo "==> ${label}: stale ${file} removed (no such process)."
+    fi
+  else
+    echo "==> ${label}: not started by start.sh, nothing to stop."
+  fi
+}
+
+stop_things() {
+  local also_llama=0 status=0
+  case "${1:-}" in
+    "") ;;
+    --all) also_llama=1 ;;
+    *) echo "Usage: ./start.sh --stop [--all]" >&2; exit 1 ;;
+  esac
+  load_env_if_present
+
+  stop_pid_file "native app" .app.pid "app.main" || status=1
+
+  if command -v docker >/dev/null 2>&1 && docker_running_container >/dev/null; then
+    echo "==> Stopping the container (docker compose stop channelagent)."
+    docker compose stop channelagent || status=1
+  else
+    echo "==> app (container): not running."
+  fi
+
+  if [ "$also_llama" = "1" ]; then
+    stop_pid_file "llama-server" .llama-server.pid "llama-server" || status=1
+  else
+    echo "==> llama-server left as it is (./start.sh --stop --all also stops the one this script started)."
+  fi
+  return "$status"
 }
 
 case "${1:-}" in
@@ -214,6 +363,14 @@ case "${1:-}" in
     set_config "${2:-}"
     exit 0
     ;;
+  --status)
+    show_status
+    exit 0
+    ;;
+  --stop)
+    stop_things "${2:-}"
+    exit $?
+    ;;
 esac
 
 MODE="docker"
@@ -221,6 +378,7 @@ case "${1:-}" in
   --native) MODE="native" ;;
   --admin) MODE="admin" ;;
   --restore) MODE="restore" ;;
+  --rekey) MODE="rekey" ;;
 esac
 
 echo "==> ChannelAgent start.sh (mode: $MODE)"
@@ -259,6 +417,15 @@ setup_venv() {
 if [ "$MODE" = "admin" ]; then
   setup_venv
   exec python3 -m app.admin.cli
+fi
+
+# --- Rotate ENCRYPTION_KEY (#78): the guided sequence, application stopped ---
+# `.env` was just sourced, which exported the OLD ENCRYPTION_KEY: the tool must
+# read the key from the file and never from the environment, so it is removed.
+if [ "$MODE" = "rekey" ]; then
+  setup_venv
+  shift
+  exec env -u ENCRYPTION_KEY -u OLD_ENCRYPTION_KEY python3 -m app.admin.rekey_guided "$@"
 fi
 
 # --- Restore a backup: same venv, no llama-server, the application must be stopped ---
@@ -319,6 +486,15 @@ fi
 
 # --- 3. Hand off to the selected mode ---
 if [ "$MODE" = "docker" ]; then
+  # The container runs as uid 10001, not root (#70). If ./data does not exist, Docker
+  # creates it owned by root and the application then cannot write to it: create it
+  # here, as the current user, first. On Linux the directory must also belong to
+  # uid 10001 (Docker Desktop on macOS and Windows maps ownership by itself).
+  mkdir -p data
+  if [ "$(uname -s)" = "Linux" ] && [ "$(stat -c %u data 2>/dev/null || echo 10001)" != "10001" ]; then
+    echo "!! data/ is not owned by uid 10001, the user the container runs as." >&2
+    echo "!! Run once: sudo chown -R 10001:10001 data" >&2
+  fi
   echo "==> Starting the container (docker compose up --build)."
   exec docker compose up --build
 fi
@@ -333,4 +509,6 @@ export LLAMA_SERVER_URL="http://localhost:${LLAMA_PORT}"
 echo "==> Native mode: LLAMA_SERVER_URL overridden to ${LLAMA_SERVER_URL}"
 
 echo "==> Starting app/main.py natively."
+# `exec` keeps this pid: --status and --stop find the process through it (#77).
+echo $$ > .app.pid
 exec python3 -m app.main

@@ -15,7 +15,14 @@ from collections.abc import Iterable
 from typing import Annotated, TypedDict
 
 import httpx
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, convert_to_openai_messages
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    convert_to_openai_messages,
+    trim_messages,
+)
+from langchain_core.messages.utils import count_tokens_approximately
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -54,6 +61,35 @@ def thread_id_from_key(channel: Channel, identity_key: str, agent_id: int) -> st
     return f"{channel.value}_{identity_key}_{agent_id}"
 
 
+# Share of the model's context window the conversation may fill. The rest is
+# left for the reply and for the error of the token estimate (#47).
+HISTORY_CONTEXT_SHARE = 0.75
+
+
+def history_token_budget(ctx_size: int) -> int:
+    return int(ctx_size * HISTORY_CONTEXT_SHARE)
+
+
+def window_messages(messages: list[BaseMessage], budget: int) -> list[BaseMessage]:
+    """The most recent turns that fit in `budget` estimated tokens (#47).
+
+    Starts on a human message so a reply is never sent without its question,
+    and always keeps the latest message, even alone above the budget. Only
+    what is sent to the model is cut: the checkpoint keeps the whole history
+    and the audit trail (ActionLog) is untouched. The count is the
+    characters-per-token estimate of langchain, not the model's tokenizer.
+    """
+    kept = trim_messages(
+        messages,
+        max_tokens=budget,
+        token_counter=count_tokens_approximately,
+        strategy="last",
+        start_on="human",
+        allow_partial=False,
+    )
+    return kept or messages[-1:]
+
+
 async def call_llm(state: GraphState) -> GraphState:
     """Send the conversation so far to the configured LLM gateway and
     return its reply as a new message (add_messages appends it).
@@ -64,7 +100,14 @@ async def call_llm(state: GraphState) -> GraphState:
     differs between them (see docs/ARCHITECTURE.md).
     """
     settings = get_settings()
-    payload_messages = convert_to_openai_messages(state["messages"])
+    window = window_messages(state["messages"], history_token_budget(settings.llama_ctx_size))
+    if len(window) < len(state["messages"]):
+        logger.info(
+            "Conversation trimmed for the model: %d of %d messages sent",
+            len(window),
+            len(state["messages"]),
+        )
+    payload_messages = convert_to_openai_messages(window)
     async with httpx.AsyncClient(base_url=settings.llama_server_url, timeout=120) as client:
         response = await client.post(
             "/v1/chat/completions",
@@ -152,14 +195,24 @@ async def delete_threads(thread_ids: Iterable[str]) -> int:
     return len(ids)
 
 
-async def run_turn(channel: Channel, user_id: str, agent_id: int, text: str) -> str:
+async def run_turn(
+    channel: Channel, user_id: str, agent_id: int, text: str, *, retry: bool = False
+) -> str:
     """Entry point channel adapters call after a message passes
     authorization (app/security/auth.py). Returns the assistant's reply.
+
+    `retry` marks a message that is processed again after a failed turn (#93):
+    a failed turn leaves its user message in the checkpoint, so when the last
+    stored message is that same user message it is not appended a second time.
     """
     thread_id = build_thread_id(channel, user_id, agent_id)
     graph = await get_graph()
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content=text)]},
-        config={"configurable": {"thread_id": thread_id}},
-    )
+    config = {"configurable": {"thread_id": thread_id}}
+    new_messages = [HumanMessage(content=text)]
+    if retry:
+        state = await graph.aget_state(config)
+        stored = state.values.get("messages", []) if state and state.values else []
+        if stored and isinstance(stored[-1], HumanMessage) and stored[-1].content == text:
+            new_messages = []
+    result = await graph.ainvoke({"messages": new_messages}, config=config)
     return result["messages"][-1].content

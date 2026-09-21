@@ -80,7 +80,7 @@ def llm_down(monkeypatch):
 
 @pytest.fixture
 def llm_up(monkeypatch):
-    async def fake(channel, user_id, agent_id, text):
+    async def fake(channel, user_id, agent_id, text, **_kwargs):
         return "the answer"
 
     monkeypatch.setattr("app.channels.dispatch.run_turn", fake)
@@ -133,13 +133,13 @@ async def test_a_successful_turn_is_ok_ok(authorized, llm_up):
     assert _rows() == [("inbound", "ok"), ("outbound", "ok")]
 
 
-async def test_delivery_failure_is_failed_and_keeps_the_generated_answer(authorized, llm_up):
+async def test_delivery_failure_is_undelivered_and_keeps_the_generated_answer(authorized, llm_up):
     from app.admin import service
     from app.db.models import ActionStatus
     from app.db.session import session_scope
 
     outcome, _ = await _dispatch(sink=_Sink(fail=True))
-    assert outcome is DispatchOutcome.FAILED
+    assert outcome is DispatchOutcome.UNDELIVERED
     assert _rows() == [("inbound", "ok"), ("outbound", "failed")]
     async with session_scope() as s:
         failed = await service.search_action_logs(s, status=ActionStatus.FAILED)

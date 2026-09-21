@@ -463,6 +463,26 @@ async def test_poll_leaves_a_failed_message_unread_for_a_retry(monkeypatch):
     assert email_adapter._attempts == {b"7": 1}
 
 
+async def test_poll_treats_an_undelivered_answer_like_a_failure_to_retry(monkeypatch):
+    """#64: the answer is kept and only the delivery is retried, so the message
+    stays unread and counts an attempt, then is filed after the third one.
+    """
+    from app.channels.dispatch import DispatchOutcome
+
+    h = _PollHarness(monkeypatch)
+    h.messages = [_msg()]
+    h.outcomes = [DispatchOutcome.UNDELIVERED]
+    await email_adapter._poll_once()
+    assert h.finalized == []
+    assert email_adapter._attempts == {b"7": 1}
+
+    h.outcomes = [DispatchOutcome.UNDELIVERED, DispatchOutcome.UNDELIVERED]
+    await email_adapter._poll_once()
+    await email_adapter._poll_once()
+    assert h.finalized == [(b"7", email_adapter.failed_folder("INBOX.Agent"))]
+    assert [c["retry"] for c in h.dispatch_calls] == [False, True, True]
+
+
 async def test_poll_retries_then_files_the_message_after_a_success(monkeypatch):
     from app.channels.dispatch import DispatchOutcome
 

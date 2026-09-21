@@ -21,6 +21,7 @@ the Telegram adapter and Admin API also run in.
 
 import asyncio
 import email
+import email.message
 import email.utils
 import imaplib
 import logging
@@ -182,6 +183,18 @@ def _mark_seen_and_file(imap: imaplib.IMAP4, uid: bytes, folder: str) -> None:
         )
 
 
+def _is_automated(msg: email.message.Message) -> bool:
+    """Machine-generated mail (RFC 3834 and the common bulk markers): an
+    `Auto-Submitted` value other than `no`, or `Precedence: bulk|list|junk`.
+    Such a message is never a person asking for access, and answering it can
+    start a reply loop with another robot (#65).
+    """
+    auto = str(msg.get("Auto-Submitted", "")).split(";")[0].strip().lower()
+    if auto and auto != "no":
+        return True
+    return str(msg.get("Precedence", "")).strip().lower() in ("bulk", "list", "junk")
+
+
 def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[TaggedMessage]:
     """Sync IMAP work: connect, find UNSEEN messages whose subject carries
     the trigger tag, read only those (BODY.PEEK, so reading sets no flag)
@@ -218,6 +231,12 @@ def _fetch_tagged_unseen(tag: str, folder: str = "") -> list[TaggedMessage]:
                 subject = _decode(msg.get("Subject", ""))
                 if not _subject_has_tag(subject, tag):
                     continue
+                if _is_automated(msg):
+                    logger.info(
+                        "Ignoring automated mail (uid %s): no request, no reply", uid.decode()
+                    )
+                    _mark_seen_and_file(imap, uid, folder)
+                    continue
                 from_addr = email.utils.parseaddr(msg.get("From", ""))[1]
                 body = _extract_body(msg).strip()
                 if from_addr and body:
@@ -246,6 +265,8 @@ def _send_reply_sync(to_address: str, subject: str, body: str) -> None:
     msg["Subject"] = subject
     msg["From"] = settings.email_username
     msg["To"] = to_address
+    # RFC 3834: tells other systems not to answer this automatic reply.
+    msg["Auto-Submitted"] = "auto-replied"
     with smtplib.SMTP_SSL(settings.email_smtp_host, settings.email_smtp_port, timeout=10) as smtp:
         smtp.login(settings.email_username, settings.email_password)
         smtp.send_message(msg)
@@ -274,7 +295,7 @@ async def _poll_once() -> None:
             logger.exception("Handling the email from %s failed", message.from_addr)
             outcome = DispatchOutcome.FAILED
 
-        if outcome is DispatchOutcome.FAILED:
+        if outcome in (DispatchOutcome.FAILED, DispatchOutcome.UNDELIVERED):
             attempts += 1
             _attempts[message.uid] = attempts
             if attempts < MAX_ATTEMPTS:

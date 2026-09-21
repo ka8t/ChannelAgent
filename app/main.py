@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.db.bootstrap import bootstrap_admin_from_env
 from app.db.session import init_db, session_scope
 from app.graph import close_graph, get_graph
+from app.health import heartbeat
 from app.logging_setup import configure_logging
 from app.security.permissions import harden_process, warn_about_loose_application_files
 
@@ -120,6 +121,7 @@ async def main() -> int:
             "Admin API starting on %s:%s.", settings.api_server_host, settings.api_server_port
         )
 
+    beating = asyncio.create_task(heartbeat(tasks))
     try:
         if not tasks:
             logger.info("No channel adapters are enabled (see epic #6 on the issue tracker).")
@@ -133,6 +135,7 @@ async def main() -> int:
             logger.error("Every component has stopped (see the errors above): exiting.")
             return 1
     finally:
+        beating.cancel()
         await close_graph()
 
 

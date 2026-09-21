@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.admin.service import (
     ensure_access_request,
     find_agent_by_name,
+    find_undelivered_answer,
     get_or_create_default_agent,
     list_agents,
     record_action,
@@ -45,7 +46,10 @@ SILENT_DENIAL_CHANNELS = frozenset({Channel.EMAIL})
 class DispatchOutcome(enum.StrEnum):
     OK = "ok"  # answered and delivered
     DENIED = "denied"  # not authorized, nothing to retry
-    FAILED = "failed"  # the turn or the delivery failed (#51)
+    FAILED = "failed"  # the turn failed (#51)
+    # The answer was produced and kept, but could not be delivered (#64). A
+    # retry sends the kept text again instead of running the turn a second time.
+    UNDELIVERED = "undelivered"
 
 
 APOLOGY_MESSAGE = "Sorry, I cannot answer right now. Please try again in a few minutes."
@@ -69,8 +73,11 @@ async def dispatch_event(
     text). The caller learns the outcome and decides about retrying.
 
     `retry` is for a message that is being processed again: the inbound
-    entry already exists and is not written twice. `apologize=False` is
-    for channels that retry silently (email).
+    entry already exists and is not written twice. If that message had been
+    answered but the answer could not be delivered, only the delivery is
+    retried, with the text kept in the audit trail (#64): the model is not
+    called again and the conversation gains no second turn. `apologize=False`
+    is for channels that retry silently (email).
     """
     decision = await authorize(session, event.channel, event.user_id)
 
@@ -116,8 +123,18 @@ async def dispatch_event(
         )
     await session.commit()
 
+    if retry:
+        pending = await find_undelivered_answer(
+            session, user_id, agent_id, event.channel, event.text,
+            not_answers=(APOLOGY_MESSAGE, NO_REPLY_NOTE),
+        )
+        if pending is not None:
+            return await _redeliver(session, event, pending)
+
     try:
-        reply_text = await run_turn(event.channel, event.user_id, agent_id, event.text)
+        reply_text = await run_turn(
+            event.channel, event.user_id, agent_id, event.text, retry=retry
+        )
     except Exception as exc:
         logger.exception("Turn failed for %s/%s", event.channel.value, event.user_id)
         if isinstance(exc, ValueError) and "decrypt" in str(exc).lower():
@@ -157,7 +174,26 @@ async def dispatch_event(
         logger.exception("Delivering the reply to %s/%s failed", event.channel.value, event.user_id)
         outbound.status = ActionStatus.FAILED
         await session.commit()
-        return DispatchOutcome.FAILED
+        return DispatchOutcome.UNDELIVERED
+    return DispatchOutcome.OK
+
+
+async def _redeliver(session: AsyncSession, event: NormalizedEvent, pending) -> DispatchOutcome:
+    """Send again an answer that was generated and recorded but not delivered (#64).
+    Success turns its entry from failed to ok; no second entry is written.
+    """
+    try:
+        await event.reply(pending.text)
+    except Exception:
+        logger.exception(
+            "Delivering the kept reply to %s/%s failed again", event.channel.value, event.user_id
+        )
+        return DispatchOutcome.UNDELIVERED
+    pending.status = ActionStatus.OK
+    await session.commit()
+    logger.info(
+        "Kept reply delivered to %s/%s without a new turn", event.channel.value, event.user_id
+    )
     return DispatchOutcome.OK
 
 
@@ -212,5 +248,5 @@ async def handle_agent_command(
         await event.reply(answer)
     except Exception:
         logger.exception("Replying to /agent for %s/%s failed", event.channel.value, event.user_id)
-        return DispatchOutcome.FAILED
+        return DispatchOutcome.UNDELIVERED
     return DispatchOutcome.OK

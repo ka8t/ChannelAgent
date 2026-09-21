@@ -407,6 +407,12 @@ async def _menu_storage() -> None:
         print(f"  {table:<20} {count}")
     print(f"Oldest log: {_fmt_time(overview.oldest_log_at)}")
     print(f"Newest log: {_fmt_time(overview.newest_log_at)}")
+    if overview.checkpoint_size_bytes is None:
+        print("Conversation checkpoints: none stored yet")
+    else:
+        print(f"Conversation checkpoints size: {_human_size(overview.checkpoint_size_bytes)}")
+        for table, count in overview.checkpoint_row_counts.items():
+            print(f"  {table:<20} {count}")
     print(f"Undecryptable values: {overview.undecryptable_rows}")
     for table, count in overview.undecryptable_by_table.items():
         print(f"  {table:<20} {count}")

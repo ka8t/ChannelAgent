@@ -5,6 +5,7 @@ session from, so nothing else constructs its own engine.
 """
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import lru_cache
@@ -45,6 +46,15 @@ def _ensure_sqlite_dir_exists(database_url: str) -> None:
     path = sqlite_file_path(database_url)
     if path is not None:
         path.parent.mkdir(parents=True, exist_ok=True)
+        if not os.access(path.parent, os.W_OK | os.X_OK):
+            # The image runs as uid 10001, not root (#70): a data directory
+            # mounted from the host must belong to that user.
+            raise PermissionError(
+                f"The data directory {path.parent} is not writable by uid {os.getuid()}. "
+                "With Docker on Linux, give the mounted directory to the container user: "
+                "chown -R 10001:10001 <host data directory>. See docs/ARCHITECTURE.md, "
+                '"Container user".'
+            )
 
 
 def _enable_sqlite_foreign_keys(engine: AsyncEngine) -> None:

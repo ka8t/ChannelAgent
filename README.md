@@ -83,7 +83,9 @@ missing) and fill in:
   serves decrypted conversations over plain HTTP: `API_SERVER_HOST`
   (native run) and `API_BIND_ADDRESS` (the address Docker publishes the
   port on) both default to `127.0.0.1`. To administer remotely use an SSH
-  tunnel or a TLS reverse proxy, see `docs/ARCHITECTURE.md` ("Admin API
+  tunnel or the TLS reverse proxy overlay (`docker compose -f
+  docker-compose.yml -f docker-compose.tls.yml up -d`, then
+  `https://localhost:8443`), see `docs/ARCHITECTURE.md` ("Admin API
   exposure").
 - `MIGRATION_BACKUPS_KEEP` — default 5. Before a migration changes an
   existing database, it is copied into `backups/` next to it and the copy is
@@ -110,11 +112,26 @@ of these variables directly:
 ./start.sh --set LLAMA_PORT=8081  # add or update one variable in .env
 ```
 
+What runs, and how to stop it (#77):
+
+```bash
+./start.sh --status               # app (container or native), Admin API, llama-server
+./start.sh --stop                 # stop the native app or the container
+./start.sh --stop --all           # ... and the llama-server this script started
+```
+
+`--stop` only signals a process it can identify as its own: the pid file
+(`.app.pid`, `.llama-server.pid`) must name a live process whose command line
+matches, otherwise the file is reported and the process is left alone. It stops
+the `channelagent` service of this project only. Settings are read at startup:
+after `--set`, the change applies at the next start (nothing is restarted for
+you, a restart would interrupt live conversations).
+
 Every successful `--set` first keeps the previous file as `.env.bak` (one
 generation, mode 600, git-ignored): to undo a bad edit, copy it back over
 `.env`. `ENCRYPTION_KEY` is protected: once it holds a value, `--set` refuses
 to replace it (that would make every encrypted value unreadable), and it
-points to the rotation tool (`python -m app.admin.rekey`) instead. Setting it
+points to the guided rotation (`./start.sh --rekey`, application stopped) instead. Setting it
 while it is empty accepts only a valid Fernet key.
 
 `--set` also checks the value itself, with the rules in `app/settings_rules.py`

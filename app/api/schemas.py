@@ -108,6 +108,8 @@ class StorageOut(BaseModel):
     newest_log_at: datetime | None
     undecryptable_rows: int
     undecryptable_by_table: dict[str, int]
+    checkpoint_size_bytes: int | None = None
+    checkpoint_row_counts: dict[str, int] = {}
 
 
 class AgentCreate(BaseModel):

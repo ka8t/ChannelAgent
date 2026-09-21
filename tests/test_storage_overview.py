@@ -235,6 +235,8 @@ async def test_api_numbers_match_sql_and_filesystem(api):
         "newest_log_at",
         "undecryptable_rows",
         "undecryptable_by_table",
+        "checkpoint_size_bytes",
+        "checkpoint_row_counts",
     }
     assert body["undecryptable_rows"] == 0 and body["undecryptable_by_table"] == {}
 

@@ -42,6 +42,13 @@ jobs:
       - name: Build image
         run: docker build -t channelagent:ci .
 
+      - name: The application does not run as root (#70)
+        run: |
+          uid=$(docker run --rm --entrypoint id channelagent:ci -u)
+          echo "uid in the image: $uid"
+          test "$uid" != 0
+          test "$uid" = 10001
+
       - name: The image refuses to start without an encryption key
         run: |
           if timeout 60 docker run --rm channelagent:ci; then
