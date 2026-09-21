@@ -193,3 +193,27 @@ class AccessRequest(Base):
     # Who resolved it: "api" or "console" (one shared API key and no admin
     # identity, see the admin-audit issue). None while pending.
     resolved_by: Mapped[str | None] = mapped_column(String(32), default=None)
+
+
+class AdminEvent(Base):
+    """One action taken by an administrator (#59): who (`api` or `console`,
+    there is one shared API key and no admin identity), what, on which
+    object. Written by the service functions in the same transaction as the
+    change, so the API and the console record identical events.
+
+    No foreign keys on purpose: an event about a deleted user or agent must
+    survive it. `details` is encrypted JSON (names, filters, a search
+    keyword) and never holds a secret or an email address.
+    """
+
+    __tablename__ = "admin_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+    actor: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_id: Mapped[int | None] = mapped_column(default=None)
+    details: Mapped[str | None] = mapped_column(EncryptedString, default=None)

@@ -119,6 +119,25 @@ async def close_graph() -> None:
         await _close_locked()
 
 
+async def threads_with_history(thread_ids: Iterable[str]) -> int:
+    """How many of these conversations have a stored checkpoint. A checkpoint
+    that cannot be read counts: it exists, and that is the case an admin
+    resets (#63).
+    """
+    ids = list(thread_ids)
+    if not ids:
+        return 0
+    await get_graph()
+    saver = _state["saver"]
+    found = 0
+    for thread_id in ids:
+        try:
+            found += await saver.aget_tuple({"configurable": {"thread_id": thread_id}}) is not None
+        except Exception:
+            found += 1
+    return found
+
+
 async def delete_threads(thread_ids: Iterable[str]) -> int:
     """Delete the checkpoints of these conversations. Returns how many thread
     ids were processed (a thread with no checkpoint is not an error).

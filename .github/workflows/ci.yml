@@ -18,6 +18,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      - name: Audit the locked dependencies (pip-audit)
+        # Fails on any known vulnerability in requirements.txt. A reviewed
+        # exception is added as --ignore-vuln <ID> here, with a comment
+        # saying why and until when (see README, "Updating dependencies").
+        run: pip-audit -r requirements.txt --no-deps --disable-pip
+
       - name: Lint (ruff)
         run: ruff check .
 

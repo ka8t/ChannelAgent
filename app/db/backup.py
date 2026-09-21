@@ -14,6 +14,7 @@ Restore: stop the application, then copy the wanted file from
 """
 
 import logging
+import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -86,9 +87,15 @@ def make_backup(path: Path, label: str) -> Path:
     if it cannot be made or does not check out.
     """
     directory = path.parent / BACKUP_DIR_NAME
-    directory.mkdir(parents=True, exist_ok=True)
+    if not directory.exists():
+        directory.mkdir(parents=True, mode=0o700)  # a copy of everything: owner only (#68)
+        os.chmod(directory, 0o700)  # mkdir's mode is filtered by the umask; be exact
+    # Only a directory this function just created is changed: an existing one
+    # keeps whatever mode its owner gave it.
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
     target = directory / f"{path.stem}-{label}-{stamp}.db"
+    # Created private before any data is copied into it, whatever the umask.
+    os.close(os.open(target, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600))
     src = sqlite3.connect(path)
     dst = sqlite3.connect(target)
     try:

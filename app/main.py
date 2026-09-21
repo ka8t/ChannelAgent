@@ -16,17 +16,20 @@ from app.config import get_settings
 from app.db.bootstrap import bootstrap_admin_from_env
 from app.db.session import init_db, session_scope
 from app.graph import close_graph, get_graph
+from app.security.permissions import harden_process, warn_about_loose_application_files
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("channelagent")
 
 
 async def main() -> None:
+    harden_process()
     settings = get_settings()
     await init_db()
     async with session_scope() as session:
         await bootstrap_admin_from_env(session)
     await get_graph()  # opens (and creates) the checkpoint database now, not on the first message
+    warn_about_loose_application_files()
     logger.info("ChannelAgent started. LLM gateway: %s", settings.llama_server_url)
 
     tasks = []

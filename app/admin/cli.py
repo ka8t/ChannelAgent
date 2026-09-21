@@ -18,6 +18,7 @@ from datetime import UTC, date, datetime, timedelta
 from app.admin import service
 from app.db.models import ActionStatus, Channel, Direction, PermissionKind
 from app.db.session import init_db, session_scope
+from app.security.permissions import harden_process, warn_about_loose_application_files
 
 logger = logging.getLogger("channelagent")
 
@@ -155,7 +156,7 @@ async def _menu_users() -> None:
             print(f"  [{u.id}] {u.display_name or '(no name)'} ({status})")
         action = _prompt(
             "detail/create/activate/deactivate/add-identity/remove-identity/"
-            "grant/revoke/set-agent/delete (blank to go back)"
+            "grant/revoke/set-agent/reset-conversation/delete (blank to go back)"
         )
         if not action:
             return
@@ -163,32 +164,42 @@ async def _menu_users() -> None:
             _print_user_detail(await service.get_user_detail(session, _int("User id")))
         elif action == "create":
             name = _prompt("Display name (blank = none)") or None
-            user = await service.create_user(session, name)
+            user = await service.create_user(session, name, actor=CONSOLE_ACTOR)
             await session.commit()
             print(f"Created user id={user.id}.")
         elif action in ("activate", "deactivate"):
             active = action == "activate"
-            user = await service.update_user(session, _int("User id"), is_active=active)
+            user = await service.update_user(
+                session, _int("User id"), is_active=active, actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print(f"User {user.id} is now {'active' if user.is_active else 'inactive'}.")
         elif action == "add-identity":
             user_id = _int("User id")
             channel = _required_enum("Channel", Channel)
             identifier = _prompt("Identifier (Telegram id, Matrix id or email address)")
-            identity = await service.add_channel_identity(session, user_id, channel, identifier)
+            identity = await service.add_channel_identity(
+                session, user_id, channel, identifier, actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print(f"Added identity id={identity.id}.")
         elif action == "remove-identity":
-            await service.remove_channel_identity(session, _int("User id"), _int("Identity id"))
+            await service.remove_channel_identity(
+                session, _int("User id"), _int("Identity id"), actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print("Removed.")
         elif action in ("grant", "revoke"):
             user_id, identity_id = _int("User id"), _int("Identity id")
             kind = _required_enum("Permission", PermissionKind)
             if action == "grant":
-                await service.grant_identity_permission(session, user_id, identity_id, kind)
+                await service.grant_identity_permission(
+                    session, user_id, identity_id, kind, actor=CONSOLE_ACTOR
+                )
             else:
-                await service.revoke_identity_permission(session, user_id, identity_id, kind)
+                await service.revoke_identity_permission(
+                    session, user_id, identity_id, kind, actor=CONSOLE_ACTOR
+                )
             await session.commit()
             print(f"{'Granted' if action == 'grant' else 'Revoked'} {kind.value}.")
         elif action == "set-agent":
@@ -198,13 +209,29 @@ async def _menu_users() -> None:
                 agent_id = int(raw) if raw else None
             except ValueError as exc:
                 raise _BadInput(f"Agent id: expected a number, got {raw!r}") from exc
-            await service.set_identity_agent(session, user_id, identity_id, agent_id)
+            await service.set_identity_agent(
+                session, user_id, identity_id, agent_id, actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print("Now talking to agent " + (str(agent_id) if agent_id else "default") + ".")
+        elif action == "reset-conversation":
+            user_id = _int("User id")
+            raw = _prompt("Agent id (blank = all of this user's agents)")
+            try:
+                agent_id = int(raw) if raw else None
+            except ValueError as exc:
+                raise _BadInput(f"Agent id: expected a number, got {raw!r}") from exc
+            count = await service.reset_conversation(
+                session, user_id, agent_id, actor=CONSOLE_ACTOR
+            )
+            await session.commit()
+            print(f"Reset {count} conversation(s).")
         elif action == "delete":
             user_id = _int("User id")
             purge = _prompt("Type PURGE to also delete agents, logs and conversations (blank = no)")
-            report = await service.delete_user(session, user_id, purge=purge == "PURGE")
+            report = await service.delete_user(
+                session, user_id, purge=purge == "PURGE", actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print(
                 f"Deleted user {report.user_id} ({report.agents_deleted} agent(s), "
@@ -227,15 +254,21 @@ async def _menu_agents() -> None:
             print(f"  [{a.id}] {a.name} ({'active' if a.is_active else 'inactive'})")
         action = _prompt("create/rename/activate/deactivate (blank to go back)")
         if action == "create":
-            agent = await service.create_agent(session, user_id, _prompt("New agent name"))
+            agent = await service.create_agent(
+                session, user_id, _prompt("New agent name"), actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print(f"Created agent id={agent.id}.")
         elif action == "rename":
-            await service.rename_agent(session, _int("Agent id"), _prompt("New name"))
+            await service.rename_agent(
+                session, _int("Agent id"), _prompt("New name"), actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print("Renamed.")
         elif action in ("activate", "deactivate"):
-            await service.set_agent_active(session, _int("Agent id"), action == "activate")
+            await service.set_agent_active(
+                session, _int("Agent id"), action == "activate", actor=CONSOLE_ACTOR
+            )
             await session.commit()
             print("Activated." if action == "activate" else "Deactivated.")
         elif action:
@@ -275,10 +308,12 @@ async def _menu_logs() -> None:
                 until=until,
                 keyword=keyword,
                 limit=limit,
+                actor=CONSOLE_ACTOR,
             )
         except ValueError as exc:
             print(f"Invalid input, nothing searched. {exc}")
             return
+        await session.commit()  # a read of decrypted logs is itself recorded (#59)
     if not logs:
         print("No matching logs.")
         return
@@ -292,6 +327,53 @@ async def _menu_logs() -> None:
             f"{entry.channel.value} {entry.direction.value}{flag}: {preview}"
         )
     if len(logs) == limit:
+        print("  (limit reached: narrow the filters or raise the limit for more)")
+
+
+@_safe
+async def _menu_admin_events() -> None:
+    """What administrators did, through service.search_admin_events (#59),
+    the same function GET /admin-events uses. Blank answers mean "no filter".
+    """
+    try:
+        actor = _prompt("Actor (api/console, blank = any)") or None
+        action = _prompt("Action, e.g. user.update (blank = any)") or None
+        target_type = _prompt("Target type, e.g. user (blank = any)") or None
+        target_id = _ask_optional("Target id (blank = any)", int, "expected a number")
+        since = _ask_day("From date")
+        until = _ask_day("To date, inclusive", inclusive_end=True)
+        asked_limit = _ask_optional("Max results (blank = 20)", int, "expected a number")
+        limit = _DEFAULT_LOG_LIMIT if asked_limit is None else asked_limit
+    except _BadInput as exc:
+        print(f"Invalid input, nothing searched. {exc}")
+        return
+
+    async with session_scope() as session:
+        try:
+            events = await service.search_admin_events(
+                session,
+                actor=actor,
+                action=action,
+                target_type=target_type,
+                target_id=target_id,
+                since=since,
+                until=until,
+                limit=limit,
+                reader=CONSOLE_ACTOR,
+            )
+        except ValueError as exc:
+            print(f"Invalid input, nothing searched. {exc}")
+            return
+        await session.commit()
+    if not events:
+        print("No matching events.")
+        return
+    print(f"{len(events)} result(s), most recent first:")
+    for e in events:
+        ts = e.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        target = f"{e.target_type}#{e.target_id}" if e.target_id is not None else e.target_type
+        print(f"  #{e.id} [{ts}] {e.actor} {e.action} {target} {e.details or ''}")
+    if len(events) == limit:
         print("  (limit reached: narrow the filters or raise the limit for more)")
 
 
@@ -335,11 +417,14 @@ _MENU = {
     "3": ("Agents", _menu_agents),
     "4": ("Search logs", _menu_logs),
     "5": ("Storage overview", _menu_storage),
+    "6": ("Admin events (what administrators did)", _menu_admin_events),
 }
 
 
 async def main() -> None:
+    harden_process()
     await init_db()
+    warn_about_loose_application_files()
     print("=== ChannelAgent Admin Console ===")
     try:
         while True:

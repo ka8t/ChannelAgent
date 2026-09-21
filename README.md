@@ -262,6 +262,32 @@ overrides it from `.env`'s `DATABASE_URL` at runtime (via
 uses, so a migration can never accidentally target a different
 database than the app runs against.
 
+## Updating dependencies
+
+The versions are locked: `requirements.txt` (what the image, CI and
+`start.sh` install) and `requirements-dev.txt` (what CI installs, runtime
+plus test tools) hold exact pins for every package, including the indirect
+ones. Do not edit them: change `requirements.in` / `requirements-dev.in`
+(the loose lists of direct dependencies) and regenerate.
+
+```bash
+scripts/update_requirements.sh --keep   # after editing an .in file: keep current pins
+scripts/update_requirements.sh          # move everything to the newest versions
+```
+
+The script resolves inside `python:3.12-slim`, the interpreter of the image
+and of CI, so the result does not depend on the Python installed on your
+machine. Review the diff like code, then run `pytest` and the audit:
+
+```bash
+pip-audit -r requirements.txt --no-deps --disable-pip   # exit 0 = no known vulnerability
+```
+
+CI runs the same audit and fails on any known vulnerability. A reviewed
+exception is added to that CI step as `--ignore-vuln <ID>` with a comment
+saying why and until when. Dependabot opens one grouped update pull request
+per week (`.github/dependabot.yml`).
+
 ## Troubleshooting
 
 - **`ENCRYPTION_KEY is missing or empty`** (from `start.sh` or

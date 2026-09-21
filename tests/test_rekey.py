@@ -99,8 +99,8 @@ async def test_every_value_moves_to_the_new_key_and_the_app_reads_it_back(world,
     assert _readable_with(OLD, before) == 3 and _readable_with(NEW, before) == 0
 
     report = run_rekey(db, cp, OLD, NEW)
-    assert report.applied and report.to_rewrite == 6 and report.unreadable == 0
-    assert (report.verified_new, report.still_old) == (6, 0)
+    assert report.applied and report.to_rewrite == 9 and report.unreadable == 0
+    assert (report.verified_new, report.still_old) == (9, 0)
 
     for table, column, count in (
         ("action_logs", "text", 3),
@@ -141,7 +141,7 @@ async def test_a_dry_run_changes_nothing_and_says_what_it_would_do(world):
     db, cp = _paths()
     digest = _sha(db)
     report = run_rekey(db, cp, OLD, NEW, dry_run=True)
-    assert not report.applied and report.to_rewrite == 6 and report.unreadable == 0
+    assert not report.applied and report.to_rewrite == 9 and report.unreadable == 0
     assert _sha(db) == digest
     assert not (db.parent / "backups").exists()
 
@@ -154,7 +154,7 @@ async def test_running_it_twice_leaves_everything_alone_the_second_time(world):
     second = run_rekey(db, cp, OLD, NEW)
     assert second.backups == [] and not second.applied, "nothing to do, no useless backup"
     assert sorted(p.name for p in (db.parent / "backups").glob("*.db")) == backups_after_first
-    assert second.to_rewrite == 0 and sum(t.new for t in second.targets.values()) == 6
+    assert second.to_rewrite == 0 and sum(t.new for t in second.targets.values()) == 9
     assert _sha(db) == digest, "nothing was rewritten"
 
 
@@ -201,7 +201,7 @@ async def test_allow_unreadable_rotates_the_rest_and_leaves_the_bad_value_as_it_
     con.commit()
     con.close()
     report = run_rekey(db, cp, OLD, NEW, allow_unreadable=True)
-    assert report.unreadable == 1 and report.to_rewrite == 5
+    assert report.unreadable == 1 and report.to_rewrite == 8
     assert "garbage" in _values(db, "action_logs", "text")
     assert _readable_with(NEW, _values(db, "action_logs", "text")) == 2
 
@@ -350,7 +350,7 @@ async def test_the_command_reports_and_returns_zero(world, monkeypatch, capsys):
     assert "action_logs.text" in out and "old key:     3" in out and "Nothing written" in out
     assert main([]) == 0
     out = capsys.readouterr().out
-    assert "Done: 6 value(s) re-encrypted; verified 6 readable with the new key, 0 still" in out
+    assert "Done: 9 value(s) re-encrypted; verified 9 readable with the new key, 0 still" in out
     assert "Backup:" in out
 
 

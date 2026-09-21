@@ -16,11 +16,13 @@ from app.api.deps import get_db_session
 from app.api.schemas import (
     AccessRequestOut,
     ActionLogOut,
+    AdminEventOut,
     AgentCreate,
     AgentOut,
     AgentUpdate,
     ChannelIdentityCreate,
     ChannelIdentityOut,
+    ConversationResetOut,
     IdentityAgentSet,
     PermissionGrant,
     PermissionOut,
@@ -32,6 +34,7 @@ from app.api.schemas import (
 from app.db.models import (
     ActionLog,
     ActionStatus,
+    AdminEvent,
     Agent,
     Channel,
     ChannelIdentity,
@@ -53,7 +56,7 @@ API_ACTOR = "api"
 async def create_user(
     body: UserCreate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
-    user = await service.create_user(session, body.display_name)
+    user = await service.create_user(session, body.display_name, actor=API_ACTOR)
     await session.commit()
     return user
 
@@ -73,7 +76,11 @@ async def update_user(
     user_id: int, body: UserUpdate, session: AsyncSession = Depends(get_db_session)
 ) -> User:
     user = await service.update_user(
-        session, user_id, display_name=body.display_name, is_active=body.is_active
+        session,
+        user_id,
+        display_name=body.display_name,
+        is_active=body.is_active,
+        actor=API_ACTOR,
     )
     await session.commit()
     return user
@@ -87,7 +94,7 @@ async def delete_user(
     ),
     session: AsyncSession = Depends(get_db_session),
 ) -> None:
-    await service.delete_user(session, user_id, purge=purge)
+    await service.delete_user(session, user_id, purge=purge, actor=API_ACTOR)
     await session.commit()
 
 
@@ -102,7 +109,9 @@ async def delete_user(
 async def add_channel_identity(
     user_id: int, body: ChannelIdentityCreate, session: AsyncSession = Depends(get_db_session)
 ) -> ChannelIdentity:
-    identity = await service.add_channel_identity(session, user_id, body.channel, body.identifier)
+    identity = await service.add_channel_identity(
+        session, user_id, body.channel, body.identifier, actor=API_ACTOR
+    )
     await session.commit()
     return identity
 
@@ -120,7 +129,9 @@ async def list_channel_identities(
 async def delete_channel_identity(
     user_id: int, channel_identity_id: int, session: AsyncSession = Depends(get_db_session)
 ) -> None:
-    await service.remove_channel_identity(session, user_id, channel_identity_id)
+    await service.remove_channel_identity(
+        session, user_id, channel_identity_id, actor=API_ACTOR
+    )
     await session.commit()
 
 
@@ -135,10 +146,29 @@ async def set_identity_agent(
 ) -> ChannelIdentity:
     """Choose which of the user's agents this channel identity talks to (#54)."""
     identity = await service.set_identity_agent(
-        session, user_id, channel_identity_id, body.agent_id
+        session, user_id, channel_identity_id, body.agent_id, actor=API_ACTOR
     )
     await session.commit()
     return identity
+
+
+# --- Conversations (#63) ---
+
+
+@router.post("/users/{user_id}/conversations/reset", response_model=ConversationResetOut)
+async def reset_conversation(
+    user_id: int,
+    agent_id: int | None = Query(
+        default=None, description="Only this agent's conversation. Omit for all of them."
+    ),
+    session: AsyncSession = Depends(get_db_session),
+) -> ConversationResetOut:
+    """Forget the stored history of a conversation that cannot be read. The
+    next message starts a fresh one; the audit trail is kept.
+    """
+    threads = await service.reset_conversation(session, user_id, agent_id, actor=API_ACTOR)
+    await session.commit()
+    return ConversationResetOut(threads_reset=threads)
 
 
 # --- Permissions ---
@@ -156,7 +186,7 @@ async def grant(
     session: AsyncSession = Depends(get_db_session),
 ) -> PermissionOut:
     permission = await service.grant_identity_permission(
-        session, user_id, channel_identity_id, body.kind
+        session, user_id, channel_identity_id, body.kind, actor=API_ACTOR
     )
     await session.commit()
     return PermissionOut.model_validate(permission)
@@ -183,7 +213,9 @@ async def revoke(
     kind: PermissionKind,
     session: AsyncSession = Depends(get_db_session),
 ) -> None:
-    await service.revoke_identity_permission(session, user_id, channel_identity_id, kind)
+    await service.revoke_identity_permission(
+        session, user_id, channel_identity_id, kind, actor=API_ACTOR
+    )
     await session.commit()
 
 
@@ -228,7 +260,7 @@ async def list_agents(user_id: int, session: AsyncSession = Depends(get_db_sessi
 async def create_agent(
     user_id: int, body: AgentCreate, session: AsyncSession = Depends(get_db_session)
 ) -> Agent:
-    agent = await service.create_agent(session, user_id, body.name)
+    agent = await service.create_agent(session, user_id, body.name, actor=API_ACTOR)
     await session.commit()
     return agent
 
@@ -245,9 +277,11 @@ async def update_agent(
     """Rename and/or activate or deactivate, whoever owns the agent."""
     agent = await service.get_agent(session, agent_id)
     if body.name is not None:
-        agent = await service.rename_agent(session, agent_id, body.name)
+        agent = await service.rename_agent(session, agent_id, body.name, actor=API_ACTOR)
     if body.is_active is not None:
-        agent = await service.set_agent_active(session, agent_id, body.is_active)
+        agent = await service.set_agent_active(
+            session, agent_id, body.is_active, actor=API_ACTOR
+        )
     await session.commit()
     return agent
 
@@ -269,8 +303,9 @@ async def search_logs(
     offset: int = Query(default=0, ge=0),
     session: AsyncSession = Depends(get_db_session),
 ) -> list[ActionLog]:
-    return await service.search_action_logs(
+    logs = await service.search_action_logs(
         session,
+        actor=API_ACTOR,
         user_id=user_id,
         agent_id=agent_id,
         channel=channel,
@@ -282,6 +317,39 @@ async def search_logs(
         limit=limit,
         offset=offset,
     )
+    await session.commit()  # a read of decrypted logs is itself recorded (#59)
+    return logs
+
+
+# --- What administrators did (#59) ---
+
+
+@router.get("/admin-events", response_model=list[AdminEventOut])
+async def search_admin_events(
+    actor: str | None = None,
+    action: str | None = None,
+    target_type: str | None = None,
+    target_id: int | None = None,
+    since: datetime | None = Query(default=None, description="Inclusive. Naive = UTC."),
+    until: datetime | None = Query(default=None, description="Exclusive. Naive = UTC."),
+    limit: int = Query(default=100, ge=1, le=service.LOG_SEARCH_MAX_LIMIT),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_db_session),
+) -> list[AdminEvent]:
+    events = await service.search_admin_events(
+        session,
+        actor=actor,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        since=since,
+        until=until,
+        limit=limit,
+        offset=offset,
+        reader=API_ACTOR,
+    )
+    await session.commit()
+    return events
 
 
 # --- Storage overview (#40) ---

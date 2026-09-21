@@ -80,6 +80,23 @@ class ActionLogOut(BaseModel):
     created_at: datetime
 
 
+class AdminEventOut(BaseModel):
+    """One administrator action (#59). `details` is decrypted JSON text."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+    actor: str
+    action: str
+    target_type: str
+    target_id: int | None
+    details: str | None
+
+
+class ConversationResetOut(BaseModel):
+    threads_reset: int
+
+
 class StorageOut(BaseModel):
     """What the database holds (#40). The file path is left out on purpose:
     the admin needs the size, not the server's directory layout.

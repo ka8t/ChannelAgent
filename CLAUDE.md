@@ -1056,3 +1056,28 @@ numeric order: **#55** implemented (unreadable values shown as
 `<undecryptable>`, counted in `/storage`, one warning per minute); on the
 real database read with the old key it counted exactly 11. Next in order:
 #58, #59, #63; #62 is an owner decision and #29 was set aside.
+
+
+## P2 tier of the plan (#72), 2026-09-20/21
+
+Done in numeric order, each with a status comment and numbers in its issue:
+#58 API auth hardening (committed `caad542`), then uncommitted: #59 admin
+events (`admin_events`, actor `api`/`console`, encrypted details, log reads
+recorded), #63 `reset_conversation`, #68 file permissions (`umask 077`,
+warning on loose existing files, `start.sh` creates `.env` as 600), #69
+dependency lock (`requirements.in` -> `requirements.txt`, resolved in
+`python:3.12-slim` by `scripts/update_requirements.sh`, `pip-audit`).
+`pytest` 590 passed.
+
+- **CI is disabled at the owner's request** (`gh workflow disable`, state
+  `disabled_manually`, file unchanged). The last run (`caad542`) had 2 of 3
+  jobs failing because of #58; tracked in #73. Re-enable with `gh workflow
+  enable 361230655` only after #73. Until then the secret scan of the
+  history is run by hand (command above).
+- New encrypted column = also add it to `app/admin/rekey.py::APP_COLUMNS`
+  and `service._ENCRYPTED_COLUMNS` (a test fails otherwise). #59 found the
+  rotation tool would have missed `admin_events.details`.
+- Owner steps left: #62, `chmod` of the existing real files (#68), the
+  phase 0 items of #72, real live checks (#61).
+- Tooling: the RTK hook rewrites `sed -i` and breaks it on macOS, and
+  `grep` output is summarised: use Python for edits and mutations.

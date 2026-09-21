@@ -118,8 +118,17 @@ async def dispatch_event(
 
     try:
         reply_text = await run_turn(event.channel, event.user_id, agent_id, event.text)
-    except Exception:
+    except Exception as exc:
         logger.exception("Turn failed for %s/%s", event.channel.value, event.user_id)
+        if isinstance(exc, ValueError) and "decrypt" in str(exc).lower():
+            # The stored history cannot be read, so every message on this
+            # conversation will fail until an admin resets it (#63).
+            logger.error(
+                "The stored conversation of user %s, agent %s cannot be read. An admin can "
+                "reset it: console, Users > reset-conversation, or "
+                "POST /users/%s/conversations/reset?agent_id=%s",
+                user_id, agent_id, user_id, agent_id,
+            )
         sent = False
         if apologize:
             try:

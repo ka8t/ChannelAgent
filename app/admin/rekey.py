@@ -29,12 +29,14 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 
 from app.db.backup import make_backup
+from app.security.permissions import harden_process
 
 # (table, key column, value column)
 APP_COLUMNS = (
     ("action_logs", "id", "text"),
     ("access_requests", "id", "first_message_text"),
     ("channel_identities", "id", "raw_address"),
+    ("admin_events", "id", "details"),
 )
 # LangGraph SQLite checkpointer tables: (table, key columns, type column, blob column)
 CHECKPOINT_COLUMNS = (
@@ -234,6 +236,7 @@ def main(argv: list[str] | None = None) -> int:
         help="environment variable holding the OLD key (default %(default)s)",
     )
     args = parser.parse_args(argv)
+    harden_process()
 
     from app.checkpoints import checkpoint_db_path
     from app.config import get_settings

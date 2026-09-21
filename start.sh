@@ -34,11 +34,27 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$REPO_DIR"
 
+# .env holds every secret: it is created readable by its owner only (#68),
+# whatever the caller's umask. A .env that already exists is never changed,
+# only reported when other users can read it.
+create_env_from_example() {
+  (umask 077; cp .env.example .env)
+}
+
+warn_if_env_is_shared() {
+  local mode
+  mode="$(python3 -c "import os; print(format(os.stat('.env').st_mode & 0o777, 'o'))")"
+  if [ $(( 8#$mode & 8#077 )) -ne 0 ]; then
+    echo "!! .env is readable by other users (mode ${mode}) and holds secrets. Restrict it: chmod 600 .env" >&2
+  fi
+}
+
 show_config() {
   if [ ! -f .env ]; then
     echo "No .env found — copying from .env.example." >&2
-    cp .env.example .env
+    create_env_from_example
   fi
+  warn_if_env_is_shared
   python3 - <<'PYEOF'
 SENSITIVE = {
     "ENCRYPTION_KEY",
@@ -92,8 +108,9 @@ set_config() {
     exit 1
   fi
   if [ ! -f .env ]; then
-    cp .env.example .env
+    create_env_from_example
   fi
+  warn_if_env_is_shared
   python3 - "$key" "$value" <<'PYEOF'
 import difflib
 import sys
@@ -157,8 +174,9 @@ echo "==> ChannelAgent start.sh (mode: $MODE)"
 # --- 1. .env must exist ---
 if [ ! -f .env ]; then
   echo "!! No .env found. Copying .env.example — fill in real values before running the app." >&2
-  cp .env.example .env
+  create_env_from_example
 fi
+warn_if_env_is_shared
 
 if ! grep -q "^ENCRYPTION_KEY=.\+" .env; then
   echo "!! ENCRYPTION_KEY is missing or empty in .env — the app will refuse to start without it." >&2

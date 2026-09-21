@@ -3,6 +3,8 @@ interactive CLI (#41) and the Admin API both call these functions —
 neither re-implements the DB queries itself.
 """
 
+import enum
+import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -14,6 +16,7 @@ from app.db.models import (
     AccessRequest,
     ActionLog,
     ActionStatus,
+    AdminEvent,
     Agent,
     Channel,
     ChannelIdentity,
@@ -30,6 +33,10 @@ from app.security.auth import grant_permission, revoke_permission
 from app.security.hashing import channel_identifier_key
 
 DEFAULT_AGENT_NAME = "default"
+# Recorded when a caller does not say who acts. The API and the console
+# always do (tests check that none of their events is "unspecified").
+DEFAULT_ACTOR = "unspecified"
+MAX_ACTOR_LENGTH = 32
 
 
 class NotFoundError(ValueError):
@@ -91,6 +98,33 @@ class UserHasHistoryError(ConflictError):
         )
 
 
+async def record_admin_event(
+    session: AsyncSession,
+    *,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: int | None = None,
+    details: dict | None = None,
+) -> AdminEvent:
+    """Record one administrator action (#59), in the caller's transaction.
+    `details` must never hold a secret or an email address.
+    """
+    actor = (actor or "").strip()
+    if not actor or len(actor) > MAX_ACTOR_LENGTH:
+        raise InvalidInputError(f"An actor is 1 to {MAX_ACTOR_LENGTH} characters")
+    event = AdminEvent(
+        actor=actor,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        details=json.dumps(details, sort_keys=True, default=str) if details else None,
+    )
+    session.add(event)
+    await session.flush()
+    return event
+
+
 async def _require_user(session: AsyncSession, user_id: int) -> User:
     user = await session.get(User, user_id)
     if user is None:
@@ -137,7 +171,9 @@ async def get_agent(session: AsyncSession, agent_id: int) -> Agent:
     return agent
 
 
-async def create_agent(session: AsyncSession, user_id: int, name: str) -> Agent:
+async def create_agent(
+    session: AsyncSession, user_id: int, name: str, *, actor: str = DEFAULT_ACTOR
+) -> Agent:
     await _require_user(session, user_id)
     name = _clean_agent_name(name)
     if await _agent_named(session, user_id, name) is not None:
@@ -145,6 +181,14 @@ async def create_agent(session: AsyncSession, user_id: int, name: str) -> Agent:
     agent = Agent(user_id=user_id, name=name)
     session.add(agent)
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="agent.create",
+        target_type="agent",
+        target_id=agent.id,
+        details={"name": name, "owner_user_id": user_id},
+    )
     return agent
 
 
@@ -154,7 +198,9 @@ async def list_agents(session: AsyncSession, user_id: int) -> list[Agent]:
     return list((await session.execute(stmt)).scalars().all())
 
 
-async def rename_agent(session: AsyncSession, agent_id: int, new_name: str) -> Agent:
+async def rename_agent(
+    session: AsyncSession, agent_id: int, new_name: str, *, actor: str = DEFAULT_ACTOR
+) -> Agent:
     """Admin-editable (#37): callable against any user's Agent, not only
     the owning user's own — callers decide who's allowed to call this.
     """
@@ -163,15 +209,34 @@ async def rename_agent(session: AsyncSession, agent_id: int, new_name: str) -> A
     clash = await _agent_named(session, agent.user_id, new_name)
     if clash is not None and clash.id != agent.id:
         raise AgentNameTakenError(f"User {agent.user_id} already has an agent named {new_name!r}")
+    old_name = agent.name
     agent.name = new_name
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="agent.rename",
+        target_type="agent",
+        target_id=agent.id,
+        details={"old_name": old_name, "new_name": new_name},
+    )
     return agent
 
 
-async def set_agent_active(session: AsyncSession, agent_id: int, is_active: bool) -> Agent:
+async def set_agent_active(
+    session: AsyncSession, agent_id: int, is_active: bool, *, actor: str = DEFAULT_ACTOR
+) -> Agent:
     agent = await get_agent(session, agent_id)
     agent.is_active = is_active
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="agent.set_active",
+        target_type="agent",
+        target_id=agent.id,
+        details={"is_active": is_active},
+    )
     return agent
 
 
@@ -197,7 +262,12 @@ async def resolve_agent(session: AsyncSession, user_id: int, active_agent_id: in
 
 
 async def set_identity_agent(
-    session: AsyncSession, user_id: int, identity_id: int, agent_id: int | None
+    session: AsyncSession,
+    user_id: int,
+    identity_id: int,
+    agent_id: int | None,
+    *,
+    actor: str = DEFAULT_ACTOR,
 ) -> ChannelIdentity:
     """Choose the agent one channel identity talks to. `None` goes back to the
     default agent. The agent must belong to the same user.
@@ -209,6 +279,14 @@ async def set_identity_agent(
             raise AgentNotFoundError(f"No agent {agent_id} for user {user_id}")
     identity.active_agent_id = agent_id
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="identity.set_agent",
+        target_type="user",
+        target_id=user_id,
+        details={"identity_id": identity_id, "agent_id": agent_id},
+    )
     return identity
 
 
@@ -322,6 +400,14 @@ async def approve_request(
     request.resolved_at = _utcnow()
     request.resolved_by = resolved_by
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=resolved_by or DEFAULT_ACTOR,
+        action="request.approve",
+        target_type="access_request",
+        target_id=request_id,
+        details={"user_id": user.id, "channel": request.channel.value},
+    )
     return user
 
 
@@ -333,6 +419,14 @@ async def deny_request(
     request.resolved_at = _utcnow()
     request.resolved_by = resolved_by
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=resolved_by or DEFAULT_ACTOR,
+        action="request.deny",
+        target_type="access_request",
+        target_id=request_id,
+        details={"channel": request.channel.value},
+    )
 
 
 # --- Users, channel identities and permissions (#41, #35) ---
@@ -340,10 +434,20 @@ async def deny_request(
 # One implementation here, called by both front ends.
 
 
-async def create_user(session: AsyncSession, display_name: str | None = None) -> User:
+async def create_user(
+    session: AsyncSession, display_name: str | None = None, *, actor: str = DEFAULT_ACTOR
+) -> User:
     user = User(display_name=display_name)
     session.add(user)
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="user.create",
+        target_type="user",
+        target_id=user.id,
+        details={"display_name": display_name},
+    )
     return user
 
 
@@ -361,14 +465,26 @@ async def update_user(
     *,
     display_name: str | None = None,
     is_active: bool | None = None,
+    actor: str = DEFAULT_ACTOR,
 ) -> User:
     """Only the fields that are given change."""
     user = await _require_user(session, user_id)
+    changed: dict = {}
     if display_name is not None:
         user.display_name = display_name
+        changed["display_name"] = display_name
     if is_active is not None:
         user.is_active = is_active
+        changed["is_active"] = is_active
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="user.update",
+        target_type="user",
+        target_id=user_id,
+        details=changed,
+    )
     return user
 
 
@@ -383,7 +499,12 @@ async def _identity_of_user(
 
 
 async def add_channel_identity(
-    session: AsyncSession, user_id: int, channel: Channel, identifier: str
+    session: AsyncSession,
+    user_id: int,
+    channel: Channel,
+    identifier: str,
+    *,
+    actor: str = DEFAULT_ACTOR,
 ) -> ChannelIdentity:
     """`identifier` is what an admin naturally has: a Telegram id, a Matrix
     user id, or an email address. The stored lookup key is computed here,
@@ -408,6 +529,15 @@ async def add_channel_identity(
     )
     session.add(identity)
     await session.flush()
+    # The identifier itself is not recorded: it can be an email address.
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="identity.add",
+        target_type="user",
+        target_id=user_id,
+        details={"channel": channel.value, "identity_id": identity.id},
+    )
     return identity
 
 
@@ -420,11 +550,20 @@ async def list_channel_identities(session: AsyncSession, user_id: int) -> list[C
 
 
 async def remove_channel_identity(
-    session: AsyncSession, user_id: int, identity_id: int
+    session: AsyncSession, user_id: int, identity_id: int, *, actor: str = DEFAULT_ACTOR
 ) -> None:
     identity = await _identity_of_user(session, user_id, identity_id)
+    channel = identity.channel
     await session.delete(identity)  # cascades to its permissions
     await session.flush()
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="identity.remove",
+        target_type="user",
+        target_id=user_id,
+        details={"channel": channel.value, "identity_id": identity_id},
+    )
 
 
 async def list_identity_permissions(
@@ -440,18 +579,45 @@ async def list_identity_permissions(
 
 
 async def grant_identity_permission(
-    session: AsyncSession, user_id: int, identity_id: int, kind: PermissionKind
+    session: AsyncSession,
+    user_id: int,
+    identity_id: int,
+    kind: PermissionKind,
+    *,
+    actor: str = DEFAULT_ACTOR,
 ) -> Permission:
     identity = await _identity_of_user(session, user_id, identity_id)
-    return await grant_permission(session, identity, kind)
+    permission = await grant_permission(session, identity, kind)
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="permission.grant",
+        target_type="user",
+        target_id=user_id,
+        details={"identity_id": identity_id, "kind": kind.value},
+    )
+    return permission
 
 
 async def revoke_identity_permission(
-    session: AsyncSession, user_id: int, identity_id: int, kind: PermissionKind
+    session: AsyncSession,
+    user_id: int,
+    identity_id: int,
+    kind: PermissionKind,
+    *,
+    actor: str = DEFAULT_ACTOR,
 ) -> None:
     identity = await _identity_of_user(session, user_id, identity_id)
     if not await revoke_permission(session, identity, kind):
         raise PermissionNotHeldError(f"Permission {kind.value} was not held")
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="permission.revoke",
+        target_type="user",
+        target_id=user_id,
+        details={"identity_id": identity_id, "kind": kind.value},
+    )
 
 
 @dataclass(frozen=True)
@@ -505,6 +671,56 @@ def _as_utc(value: datetime) -> datetime:
 
 
 async def search_action_logs(
+    session: AsyncSession,
+    *,
+    user_id: int | None = None,
+    agent_id: int | None = None,
+    channel: Channel | None = None,
+    direction: Direction | None = None,
+    status: ActionStatus | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    keyword: str | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    actor: str = DEFAULT_ACTOR,
+) -> list[ActionLog]:
+    """Search the audit trail (#39) and record that an administrator read
+    it (#59): the filters used, not the results. The caller must commit,
+    read-only requests included, or the record is lost. See
+    `_search_action_logs` for the filters.
+    """
+    filters = {
+        "user_id": user_id,
+        "agent_id": agent_id,
+        "channel": channel,
+        "direction": direction,
+        "status": status,
+        "since": since,
+        "until": until,
+        "keyword": keyword,
+        "limit": limit,
+        "offset": offset,
+    }
+    found = await _search_action_logs(session, **filters)
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="logs.search",
+        target_type="action_logs",
+        details={
+            **{
+                k: v.value if isinstance(v, enum.Enum) else v
+                for k, v in filters.items()
+                if v is not None
+            },
+            "results": len(found),
+        },
+    )
+    return found
+
+
+async def _search_action_logs(
     session: AsyncSession,
     *,
     user_id: int | None = None,
@@ -583,6 +799,65 @@ async def search_action_logs(
     return matches
 
 
+async def search_admin_events(
+    session: AsyncSession,
+    *,
+    actor: str | None = None,
+    action: str | None = None,
+    target_type: str | None = None,
+    target_id: int | None = None,
+    since: datetime | None = None,
+    until: datetime | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    reader: str | None = None,
+) -> list[AdminEvent]:
+    """Search what administrators did (#59), newest first. Filters combine
+    with AND; `since` is inclusive and `until` exclusive, like the log
+    search. `reader` is who is asking: when given, the read is recorded as
+    an `admin_events.search` event (after the query, so it does not appear in
+    its own result) and the caller must commit.
+    """
+    if not 1 <= limit <= LOG_SEARCH_MAX_LIMIT:
+        raise ValueError(f"limit must be between 1 and {LOG_SEARCH_MAX_LIMIT}, got {limit}")
+    if offset < 0:
+        raise ValueError(f"offset must be 0 or more, got {offset}")
+    stmt = select(AdminEvent)
+    if actor is not None:
+        stmt = stmt.where(AdminEvent.actor == actor)
+    if action is not None:
+        stmt = stmt.where(AdminEvent.action == action)
+    if target_type is not None:
+        stmt = stmt.where(AdminEvent.target_type == target_type)
+    if target_id is not None:
+        stmt = stmt.where(AdminEvent.target_id == target_id)
+    if since is not None:
+        stmt = stmt.where(AdminEvent.created_at >= _as_utc(since))
+    if until is not None:
+        stmt = stmt.where(AdminEvent.created_at < _as_utc(until))
+    stmt = stmt.order_by(AdminEvent.id.desc()).limit(limit).offset(offset)
+    found = list((await session.execute(stmt)).scalars().all())
+    if reader is not None:
+        filters = {
+            "actor": actor,
+            "action": action,
+            "target_type": target_type,
+            "target_id": target_id,
+            "since": since,
+            "until": until,
+            "limit": limit,
+            "offset": offset,
+        }
+        await record_admin_event(
+            session,
+            actor=reader,
+            action="admin_events.search",
+            target_type="admin_events",
+            details={**{k: v for k, v in filters.items() if v is not None}, "results": len(found)},
+        )
+    return found
+
+
 @dataclass(frozen=True)
 class StorageOverview:
     """Numbers about what the database holds (#40)."""
@@ -599,7 +874,15 @@ class StorageOverview:
         return sum(self.undecryptable_by_table.values())
 
 
-_COUNTED_MODELS = (User, ChannelIdentity, Permission, AccessRequest, Agent, ActionLog)
+_COUNTED_MODELS = (
+    User,
+    ChannelIdentity,
+    Permission,
+    AccessRequest,
+    Agent,
+    ActionLog,
+    AdminEvent,
+)
 
 
 # (table, encrypted column): every column that holds an encrypted value.
@@ -607,6 +890,7 @@ _ENCRYPTED_COLUMNS = (
     ("action_logs", "text"),
     ("access_requests", "first_message_text"),
     ("channel_identities", "raw_address"),
+    ("admin_events", "details"),
 )
 
 
@@ -673,9 +957,12 @@ class DeletionReport:
     threads_deleted: int = 0  # conversation threads whose checkpoints were purged
 
 
-async def _thread_ids_of_user(session: AsyncSession, user_id: int) -> list[str]:
+async def _thread_ids_of_user(
+    session: AsyncSession, user_id: int, agent_id: int | None = None
+) -> list[str]:
     """Every conversation thread the user can have: each of their channel
-    identities times each of their agents (the scheme of app.graph).
+    identities times each of their agents (the scheme of app.graph), or
+    times one agent when `agent_id` is given.
     """
     from app.graph import thread_id_from_key
 
@@ -684,9 +971,10 @@ async def _thread_ids_of_user(session: AsyncSession, user_id: int) -> list[str]:
         .scalars()
         .all()
     )
-    agent_ids = (
-        (await session.execute(select(Agent.id).where(Agent.user_id == user_id))).scalars().all()
-    )
+    agent_query = select(Agent.id).where(Agent.user_id == user_id)
+    if agent_id is not None:
+        agent_query = agent_query.where(Agent.id == agent_id)
+    agent_ids = (await session.execute(agent_query)).scalars().all()
     return [
         thread_id_from_key(identity.channel, identity.external_id, agent_id)
         for identity in identities
@@ -694,8 +982,47 @@ async def _thread_ids_of_user(session: AsyncSession, user_id: int) -> list[str]:
     ]
 
 
+async def reset_conversation(
+    session: AsyncSession,
+    user_id: int,
+    agent_id: int | None = None,
+    *,
+    actor: str = DEFAULT_ACTOR,
+) -> int:
+    """Forget the stored history of a user's conversations (#63): one agent's,
+    or all of them. This is the remedy when a thread cannot be decrypted (a
+    corrupted checkpoint, a key that no longer matches) and every message on
+    it fails. The next message starts a fresh conversation; the audit trail
+    (`action_logs`) is not touched. Returns how many conversations had a
+    stored history and were cleared.
+
+    The checkpoints live in another database file that cannot join the
+    caller's transaction: they are deleted here, the event is written in the
+    caller's transaction.
+    """
+    await _require_user(session, user_id)
+    if agent_id is not None:
+        agent = await session.get(Agent, agent_id)
+        if agent is None or agent.user_id != user_id:
+            raise AgentNotFoundError(f"No agent {agent_id} for user {user_id}")
+    from app.graph import delete_threads, threads_with_history
+
+    thread_ids = await _thread_ids_of_user(session, user_id, agent_id)
+    threads = await threads_with_history(thread_ids)
+    await delete_threads(thread_ids)
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="conversation.reset",
+        target_type="user",
+        target_id=user_id,
+        details={"agent_id": agent_id, "threads": threads},
+    )
+    return threads
+
+
 async def delete_user(
-    session: AsyncSession, user_id: int, *, purge: bool = False
+    session: AsyncSession, user_id: int, *, purge: bool = False, actor: str = DEFAULT_ACTOR
 ) -> DeletionReport:
     """Delete a user (#50).
 
@@ -739,6 +1066,19 @@ async def delete_user(
     from app.graph import delete_threads
 
     threads = await delete_threads(thread_ids)
+    await record_admin_event(
+        session,
+        actor=actor,
+        action="user.delete",
+        target_type="user",
+        target_id=user_id,
+        details={
+            "purge": purge,
+            "agents_deleted": agents,
+            "logs_deleted": logs,
+            "threads_deleted": threads,
+        },
+    )
     return DeletionReport(
         user_id=user_id, agents_deleted=agents, logs_deleted=logs, threads_deleted=threads
     )
