@@ -23,6 +23,14 @@ REPO = Path(__file__).resolve().parent.parent
 KEY = os.environ["ENCRYPTION_KEY"]
 
 
+@pytest.fixture(autouse=True)
+def no_docker_on_this_machine(monkeypatch):
+    """The refusal looks at running `channelagent` containers: a real one on the machine
+    running the tests (the owner's live application) must not change their result.
+    """
+    monkeypatch.setattr(rs.shutil, "which", lambda _name: None)
+
+
 def _free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -332,6 +340,52 @@ def test_refused_for_a_missing_file(world, tmp_path):
         _restore(db, tmp_path / "nope.db")
 
 
+class _Docker:
+    def __init__(self, names: list[str]):
+        self.stdout = "\n".join(names) + "\n"
+
+
+def _fake_docker(monkeypatch, names: list[str]):
+    monkeypatch.setattr(rs.shutil, "which", lambda _name: "/usr/local/bin/docker")
+    calls = []
+
+    def run(cmd, **_kw):
+        calls.append(cmd)
+        return _Docker(names)
+
+    monkeypatch.setattr(rs.subprocess, "run", run)
+    return calls
+
+
+def test_refused_while_a_channelagent_container_is_running(world, monkeypatch):
+    db, backup = world
+    sha = _sha(db)
+    calls = _fake_docker(monkeypatch, ["channelagent-channelagent-1", "channelagent-llama-1"])
+    with pytest.raises(rs.RestoreError, match="container is running.*channelagent-channelagent-1"):
+        _restore(db, backup)
+    assert calls and calls[0][:2] == ["docker", "ps"]
+    _assert_untouched(db, sha)
+
+
+def test_a_running_llama_server_container_alone_does_not_block_a_restore(world, monkeypatch):
+    db, backup = world
+    _fake_docker(monkeypatch, ["channelagent-llama-server-1"])
+    report, _ = _restore(db, backup)
+    assert _users(db) == 2 and report.before_restore_copy is not None
+
+
+def test_no_container_and_a_failing_docker_command_do_not_block_a_restore(world, monkeypatch):
+    db, backup = world
+    _fake_docker(monkeypatch, [])
+    _restore(db, backup)
+
+    def broken(cmd, **_kw):
+        raise OSError("docker is not reachable")
+
+    monkeypatch.setattr(rs.subprocess, "run", broken)
+    _restore(db, backup)
+
+
 # --- an older schema is accepted, with a note ---
 
 
@@ -445,6 +499,7 @@ def test_listing_when_there_is_no_backup_directory(tmp_path):
 def _cli(world_db: Path, *args: str, stdin: str = "", key: str = KEY, port: int | None = None):
     env = {k: v for k, v in os.environ.items() if not k.startswith(("DATABASE_", "CHECKPOINT_"))}
     env.update(
+        PATH=f"{Path(sys.executable).parent}:/usr/bin:/bin",  # no docker: see the fixture above
         PYTHONPATH=str(REPO),
         DATABASE_URL=f"sqlite+aiosqlite:///{world_db}",
         ENCRYPTION_KEY=key,

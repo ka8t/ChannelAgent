@@ -10,6 +10,8 @@ messages through yet.
 
 import asyncio
 import logging
+import sys
+from collections.abc import Coroutine
 
 from app.api.deps import MIN_API_KEY_LENGTH, api_key_is_acceptable
 from app.config import get_settings
@@ -23,7 +25,26 @@ configure_logging()
 logger = logging.getLogger("channelagent")
 
 
-async def main() -> None:
+async def _supervised(name: str, hint: str, component: Coroutine) -> None:
+    """Run one component (an adapter, the Admin API). If it fails it is logged
+    once, with what to check, and stays stopped: the others keep running (#83).
+    A Telegram token that Telegram rejects used to end the whole process, API
+    included. uvicorn ends with SystemExit when it cannot bind its port, which
+    is a failure of that component too, so it is caught here. A shutdown
+    (CancelledError, KeyboardInterrupt) is not a failure and goes through.
+    """
+    try:
+        await component
+    except (Exception, SystemExit):
+        logger.error(
+            "%s stopped and will stay stopped; the other components keep running. %s",
+            name,
+            hint,
+            exc_info=True,
+        )
+
+
+async def main() -> int:
     harden_process()
     settings = get_settings()
     await init_db()
@@ -37,14 +58,31 @@ async def main() -> None:
     if settings.telegram_bot_token:
         from app.channels.telegram import run_telegram_adapter
 
-        tasks.append(asyncio.create_task(run_telegram_adapter()))
+        tasks.append(
+            asyncio.create_task(
+                _supervised(
+                    "Telegram adapter",
+                    "Check TELEGRAM_BOT_TOKEN (if it was revoked, issue a new one with BotFather "
+                    "and run ./start.sh --set TELEGRAM_BOT_TOKEN=...) and the network.",
+                    run_telegram_adapter(),
+                )
+            )
+        )
     else:
         logger.info("TELEGRAM_BOT_TOKEN not set — Telegram adapter disabled.")
 
     if settings.email_imap_host and settings.email_username and settings.email_password:
         from app.channels.email import run_email_adapter
 
-        tasks.append(asyncio.create_task(run_email_adapter()))
+        tasks.append(
+            asyncio.create_task(
+                _supervised(
+                    "Email adapter",
+                    "Check EMAIL_IMAP_HOST, EMAIL_USERNAME, EMAIL_PASSWORD and EMAIL_TRIGGER_TAG.",
+                    run_email_adapter(),
+                )
+            )
+        )
     else:
         logger.info("Email IMAP/SMTP settings not fully set — Email adapter disabled.")
 
@@ -69,7 +107,15 @@ async def main() -> None:
             port=settings.api_server_port,
             log_level="info",
         )
-        tasks.append(asyncio.create_task(uvicorn.Server(config).serve()))
+        tasks.append(
+            asyncio.create_task(
+                _supervised(
+                    "Admin API",
+                    "Check API_SERVER_PORT (already in use?) and API_SERVER_HOST.",
+                    uvicorn.Server(config).serve(),
+                )
+            )
+        )
         logger.info(
             "Admin API starting on %s:%s.", settings.api_server_host, settings.api_server_port
         )
@@ -81,9 +127,14 @@ async def main() -> None:
                 await asyncio.sleep(3600)
         else:
             await asyncio.gather(*tasks)
+            # Every component has ended (a failure was logged by _supervised). Ending
+            # with 0 would look like a clean stop to a process manager, and the
+            # container would sit idle instead of being restarted or flagged.
+            logger.error("Every component has stopped (see the errors above): exiting.")
+            return 1
     finally:
         await close_graph()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))

@@ -518,6 +518,24 @@ hand is understood too. Tested against bash, python-dotenv, the application's
 `Settings` and `docker compose config` (which prints a literal `$` as `$$`, only
 in its output).
 
+### One failing component does not stop the others (#83)
+
+`app/main.py` runs the Telegram adapter, the email adapter and the Admin API as
+separate tasks. Each one is supervised (`_supervised`): an exception, or the
+`SystemExit` that uvicorn raises when its port is taken, is logged once at ERROR
+with the component's name, the traceback (secrets scrubbed, #82) and what to
+check (`TELEGRAM_BOT_TOKEN`, `EMAIL_*`, `API_SERVER_PORT`), and that component
+stays stopped; the others keep running. Before, a Telegram token that Telegram
+rejected ended the whole process, API included (measured: the API stopped
+answering within 8 seconds). A shutdown (cancellation, Ctrl+C) is not a
+failure and is not logged as one. When **every** component has stopped, whatever
+the reason, the process logs "Every component has stopped" and exits with code
+1, so a process manager restarts or flags it instead of seeing a clean stop
+(an adapter that only returns, such as the email adapter with an unusable tag,
+counts as stopped). A stopped adapter is not retried: a rejected token does not
+become valid by itself, and the adapters' polling loops already retry transient
+network errors.
+
 ### No secret in a log (#82)
 
 A secret never reaches a log, at any level. The cause that was found: the
