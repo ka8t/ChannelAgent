@@ -6,16 +6,13 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 #
 # Requires a prebuilt llama-server binary and a .gguf model already on
-# the VPS (obtaining one is a separate concern from this topology —
-# the legacy Hermes project's
-# linux-x86_64-vps/scripts/download-prebuilt-llama-server.sh is a
-# working reference if useful). Point LLAMA_SERVER_BIN_DIR and
+# the VPS (obtaining one is a separate concern from this topology; any
+# prebuilt Linux llama-server release works). Point LLAMA_SERVER_BIN_DIR and
 # MODELS_DIR in .env at their directories.
 #
 # CPU-only (no -ngl GPU offload flag, unlike the Mac's Metal setup) —
-# see LLAMA_THREADS in .env. GPU variants are out of scope here; the
-# legacy Hermes project's linux-x86_64-vps/docker-compose.gpu-*.yml
-# files are a reference if this deployment ever needs one.
+# see LLAMA_THREADS in .env. GPU variants are out of scope here; a GPU
+# build of llama-server would need its own compose file.
 services:
   llama-server:
     build:

@@ -40,12 +40,11 @@
 # Both run modes need a native llama-server running on this Mac first
 # (Metal-accelerated inference). If it isn't already reachable on
 # LLAMA_PORT, this script starts it itself, using LLAMA_SERVER_BIN /
-# MODELS_DIR / MODEL_FILE from .env (same invocation as Hermes's own
-# macos-arm64/scripts/run-llama-server.sh) — then leaves it running in
+# MODELS_DIR / MODEL_FILE from .env (by default ./vendor/llama.cpp and
+# ./models, inside this repository, #103) — then leaves it running in
 # the background rather than stopping it on exit: reloading the model
 # costs real time at this context size, so killing it every run would
-# make iteration painfully slow (same reasoning Hermes documents for
-# never idle-unloading it).
+# make iteration painfully slow.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -478,8 +477,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
   else
     echo "!! llama-server is not reachable on localhost:${LLAMA_PORT}, and LLAMA_SERVER_BIN /" >&2
     echo "!! MODELS_DIR / MODEL_FILE are not all set to valid paths in .env, so it can't be" >&2
-    echo "!! started automatically. Set those three (see .env.example), or start it yourself —" >&2
-    echo "!! reference: ../Hermes/macos-arm64/scripts/run-llama-server.sh" >&2
+    echo "!! started automatically. Set those three (see .env.example), or start it yourself." >&2
     exit 1
   fi
 fi

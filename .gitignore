@@ -37,3 +37,7 @@ logs/
 .DS_Store
 .vscode/
 .idea/
+
+# Local inference assets (#103): model weights and the llama-server bundle
+models/
+vendor/

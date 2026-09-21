@@ -2,8 +2,8 @@
 
 A 100% local, multi-user, multi-channel agentic system built on
 [LangGraph](https://langchain-ai.github.io/langgraph/), packaged as a
-Linux Docker container. It replaces the Hermes Agent orchestrator
-(legacy project, not part of this repository), moving user
+Linux Docker container. It replaces an earlier agent orchestrator
+(a separate legacy project, not part of this repository), moving user
 authorization from static `.env` allow-lists to a proper encrypted
 database + API layer.
 
@@ -75,7 +75,8 @@ missing) and fill in:
   your provider's otherwise. Empty leaves messages in the `INBOX`.
   Nothing is ever deleted or purged automatically.
 - `API_SERVER_KEY`, `API_SERVER_PORT`, `API_SERVER_HOST`,
-  `API_BIND_ADDRESS` — the Admin API. It stays off until `API_SERVER_KEY`
+  `API_BIND_ADDRESS`, `ALLOWED_HOSTS`, `API_MAX_BODY_BYTES`,
+  `API_REQUEST_TIMEOUT_SECONDS` — the Admin API. It stays off until `API_SERVER_KEY`
   is set (at least 16 characters, `openssl rand -hex 32`), and it is
   reachable **from the local machine only** by default, because it
   serves decrypted conversations over plain HTTP: `API_SERVER_HOST`
@@ -206,12 +207,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 
 Requires, set in `.env`:
 
-- `MODELS_DIR` — directory containing the `.gguf` model file.
+- `MODELS_DIR` — directory containing the `.gguf` model file (`./models`, git-ignored).
 - `LLAMA_SERVER_BIN_DIR` — directory containing a prebuilt Linux
   `llama-server` binary (obtaining one is a separate concern from this
-  topology — the legacy Hermes project's
-  `linux-x86_64-vps/scripts/download-prebuilt-llama-server.sh` is a
-  working reference if useful).
+  topology; any prebuilt Linux `llama-server` release works).
 - `MODEL_FILE`, already used by the Mac dev setup.
 - `LLAMA_THREADS` (default 4) — CPU thread count; there is no GPU
   offload flag in this topology, unlike the Mac's Metal setup.
@@ -353,25 +352,20 @@ per week (`.github/dependabot.yml`).
   above and set it in `.env`.
 - **`llama-server is not reachable`** (macOS, from `start.sh`, or a
   connection error from the Verify command above): start it natively
-  on the Mac host first — this project does not manage that process.
-  The legacy repo's `../Hermes/macos-arm64/scripts/run-llama-server.sh`
-  is a working reference invocation (binary path, model, and flags);
-  it expects Hermes's own `.env`, so either run it from there or reuse
-  just its `llama-server` command line with this project's `.env`
-  values (`LLAMA_CTX_SIZE`, `MODEL_FILE`).
+  on the Mac host first. `./start.sh` does it when `LLAMA_SERVER_BIN`,
+  `MODELS_DIR` and `MODEL_FILE` in `.env` point at a real binary bundle and
+  model: by default `./vendor/llama.cpp/llama-server` and `./models/`, both
+  inside this repository and git-ignored (#103).
 - **Fernet `ValueError: Fernet key must be 32 url-safe base64-encoded
   bytes`**: `ENCRYPTION_KEY` is in the wrong format — it must not be a
   hex string (e.g. a SHA-256 digest); it must be the base64 output of
   `Fernet.generate_key()` or the equivalent shown under Configure.
 - **`telegram.error.Conflict: terminated by other getUpdates
   request`**: Telegram allows only one long-polling connection per bot
-  token. `TELEGRAM_BOT_TOKEN` is deliberately reused from the legacy
-  Hermes project (same physical bot). Hermes's local gateway
-  (`ai.hermes.gateway`, a launchd service) has since been disabled on
-  this Mac — see `CLAUDE.md`'s "Operational finding" note for the
-  exact commands — but if Hermes is ever running anywhere else with
-  this same token (e.g. redeployed on a VPS), stop it first, or the two
-  will fight over the connection.
+  token. `TELEGRAM_BOT_TOKEN` belongs to a bot that an older deployment also
+  polled. That deployment is disabled on this Mac; if any other instance
+  anywhere still polls with the same token (for example one redeployed on
+  a VPS), stop it first, or the two will fight over the connection.
 
 ## Sources
 

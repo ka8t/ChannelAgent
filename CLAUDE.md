@@ -9,6 +9,25 @@ session: keep it short, put narratives in `docs/HISTORY.md`.
 
 ## Standing rules
 
+- **Independent of every other repository (user, 2026-09-21, #103: "ce depot
+  doit etre independant").** No path, model, binary, script or reference
+  pointing outside this repository, in code, config, `.env` or docs. Model
+  weights live in `models/` and the `llama-server` bundle in `vendor/llama.cpp/`
+  (both git-ignored). A case-insensitive `git grep` of the earlier
+  project's name must print 0 lines.
+- **The API is the single entry point; `start.sh` and the admin UI are its two clients
+  (user, 2026-09-21: "le script start.sh est la verite et doit permettre de tout gerer ...
+  l'ui admin est son reflet ... il faut avoir un seul point d'entree commun, l'API").**
+  `start.sh` manages everything, from administration to the complete configuration; the UI
+  needs no command line; a change to the script cannot break the UI because they share only
+  the API. One implementation per operation, no operation only in bash or only in the UI.
+  Design and contract tests: `docs/COMPARISON_AJEAN.md`, "Design rule"; epic #106.
+- **The API must be secure by design (user, 2026-09-21: "l'API doit etre securisee by
+  design").** Default deny, a declared scope on every route, named administrators,
+  no secret in any response or log, every sensitive action audited, each control with
+  a test that fails when it is removed. Threat model and controls:
+  `docs/API_SECURITY.md`. A new route without a scope, or a new outbound request
+  without the SSRF guard, is a defect.
 - **Language: English only.** All code comments, scripts, Dockerfiles,
   and documentation must be written in English, regardless of the
   language used in conversation to work on this repo.
@@ -98,10 +117,7 @@ session: keep it short, put narratives in `docs/HISTORY.md`.
   GPU-less environment.** User's instruction (2026-09-18): the Mac is
   faster to iterate against (Metal acceleration) — confirm there
   first, then confirm once more on the slower/remote target, never the
-  reverse and never only the remote one. Mirrors the legacy Hermes
-  project's own documented "Mac first, then VPS" workflow convention
-  — carried forward here as a binding rule, not just historical
-  context. (#21's production-topology test followed this pattern
+  reverse and never only the remote one. (#21's production-topology test followed this pattern
   correctly by using this Mac's own Docker Desktop rather than seeking
   out a real VPS — worth remembering as the template: local Docker's
   Linux VM often substitutes for "needs Linux," it doesn't have to
@@ -126,21 +142,18 @@ session: keep it short, put narratives in `docs/HISTORY.md`.
 
 ## What this project is
 
-Replacement for the Hermes Agent orchestrator (legacy project at
-`/Users/mac/Documents/Code/Hermes`): a 100% local, multi-user,
-multi-channel agentic system built on LangGraph, packaged as a Linux
-Docker container. Full target architecture and diagram:
+An independent, 100% local, multi-user, multi-channel agentic system
+built on LangGraph, packaged as a Linux Docker container. Full target architecture and diagram:
 `docs/ARCHITECTURE.md`.
 
 ## Key decisions (2026-09-18)
 
-- **No code ported from Hermes.** The audit of `/Users/mac/Documents/Code/Hermes`
-  found no database schema, migrations, or API server source to reuse —
-  that legacy repo is a provisioning wrapper around a closed-source
-  base image (`nousresearch/hermes-agent:latest`), not a project with
-  its own server implementation. Full findings in
-  `docs/ARCHITECTURE.md#audit-of-the-legacy-hermes-project`. Everything
-  in ChannelAgent's database/API layer is designed from scratch.
+- **No code ported from an earlier project.** The audit of the previous
+  deployment found no database schema, migrations, or API server source to
+  reuse: it was a provisioning wrapper around a closed-source base image,
+  not a project with its own server implementation. Full findings in
+  `docs/ARCHITECTURE.md#audit-of-the-previous-deployment`. Everything in
+  ChannelAgent's database/API layer is designed from scratch.
 - **User auth moves from static `.env` to DB + API.** Legacy
   `TELEGRAM_ALLOWED_USERS` / `EMAIL_ALLOWED_USERS` env vars are
   replaced by a real users/channels/permissions database queried at
@@ -177,8 +190,8 @@ Facts, refreshed when they change; the issues have the detail.
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
   adapters are live; Matrix (#29) was abandoned and the dedicated bot mailbox (#42)
   dropped, the `[agent]` tag on the shared mailbox stays (owner, 2026-09-21).
-- Last full test suite: 1055 passed, 0 failed (129 s), `ruff check .` clean
-  (2026-09-21, on 2278d7f).
+- Last full test suite: 1087 passed, 0 failed (133 s), `ruff check .` clean
+  (2026-09-21, working tree with #103 and #108, not committed yet).
   Targeted runs while working; the full suite once per batch, before a commit
   (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).

@@ -6,9 +6,9 @@ as any architectural decision, not as a follow-up.
 
 ## Origin and goal
 
-ChannelAgent replaces the Hermes Agent orchestrator (a deployment built
-on the third-party `nousresearch/hermes-agent` Docker image, see
-[Audit of the legacy Hermes project](#audit-of-the-legacy-hermes-project)
+ChannelAgent replaces an earlier agent orchestrator (a deployment built
+on a third-party, closed-source Docker image, see
+[Audit of the previous deployment](#audit-of-the-previous-deployment)
 below) with an independent, 100% local, multi-user, multi-channel
 agentic system built on LangGraph and packaged as a Linux Docker
 container.
@@ -327,6 +327,36 @@ a guesser can lock the administrator out for a minute at a time. Behind a
 reverse proxy the address is the proxy's until forwarded headers are
 supported. There is still one shared key, not one per administrator: who
 did what is recorded as `api` or `console` (#59).
+
+**Scopes and request protections (#108, design in `docs/API_SECURITY.md`).**
+Every route declares one scope with `require(Scope.X)` (`app/api/scopes.py`):
+
+| Scope | Routes |
+|---|---|
+| `READ` | lists and details (users, channels, permissions, requests, agents, storage), `/docs`, `/openapi.json` |
+| `OPERATE` | create and update users, channel identities, agents, conversation reset, approve or deny a request |
+| `ADMIN` | grant and revoke permissions, `/logs`, `/admin-events` (conversation text) |
+| `OWNER` | delete (purge) a user |
+
+The application does not start if any route lacks a scope or has two (`verify_scopes`,
+default deny). Until named administrators exist (deferred), the one API key acts as
+`OWNER`, so a key holder can still do everything; the scopes are in place for the day a
+lower one exists. The matrix test calls every route with every scope: below the required
+scope the answer is exactly 403.
+
+`ProtectMiddleware` (`app/api/protect.py`) runs before authentication:
+- **Host**: a `Host` not in `ALLOWED_HOSTS` (default `localhost,127.0.0.1,::1`) gets 421,
+  which stops DNS rebinding from a web page. A TLS proxy on another name needs that name in
+  the list (the reference proxy on `localhost` needs nothing).
+- **Origin**: a POST, PUT, PATCH or DELETE carrying an `Origin` from another host gets 403;
+  clients that send none (curl, the script) are not affected.
+- **Body**: over `API_MAX_BODY_BYTES` (1 MB) gets 413, refused on the declared length
+  before the application runs, and cut while streaming when no length is declared.
+- **Time**: over `API_REQUEST_TIMEOUT_SECONDS` (60) gets 504.
+
+An unexpected error returns `{"detail": "Internal server error", "error_id": ...}`; the
+exception text, which can hold a path, a query or a value, goes to the redacted log under
+that id. Request bodies of the Admin API schemas refuse unknown fields (422).
 
 **Rotating API_SERVER_KEY.**
 1. Generate a new key: `openssl rand -hex 32`.
@@ -1062,13 +1092,13 @@ the checkpoint ids stay readable.
   serves inference over the internal Docker network, port 8080. See
   `docker-compose.prod.yml` and `docker/llama-server.Dockerfile`
   (#21). **Decided over Ollama/vLLM**, this diagram's original
-  design, after auditing the legacy Hermes project's own production
-  setup: Hermes previously ran `llama-swap` in front of `llama-server`
-  for a "swap models at runtime" feature this project never uses, and
-  `llama-swap`'s own separate, untracked update lifecycle let its VPS
-  silently run a two-week-stale `llama-server` through a real
-  incident. A single always-loaded model, containerized directly,
-  needs none of that — and keeps the exact same OpenAI-compatible
+  design, after auditing the previous deployment's production
+  setup: it ran `llama-swap` in front of `llama-server` for a "swap
+  models at runtime" feature, and `llama-swap`'s own separate, untracked
+  update lifecycle let that VPS silently run a two-week-stale
+  `llama-server` through a real incident. A containerized `llama-server`
+  needs none of that (several models, if wanted, are handled by its own
+  router mode, #105) — and keeps the exact same OpenAI-compatible
   endpoint shape `app/graph.py` already talks to on the Mac, so dev and
   prod run identical inference code paths, not two.
 
@@ -1076,14 +1106,12 @@ The application code that calls the LLM gateway does not need to know
 which topology it is running against — only the base URL
 (`LLAMA_SERVER_URL`) changes between environments.
 
-## Audit of the legacy Hermes project
-
-Source directory audited: `/Users/mac/Documents/Code/Hermes`.
+## Audit of the previous deployment
 
 **Finding: there is no reusable database or API server source code to
-port over.** The Hermes repository is a deployment and provisioning
+port over.** The previous deployment's repository is a provisioning
 wrapper around a third-party, closed-source base image
-(`FROM nousresearch/hermes-agent:latest` in `docker/Dockerfile`), not a
+(`FROM` a vendored agent image in its `docker/Dockerfile`), not a
 project that contains its own server implementation. Concretely:
 
 - No SQL files, migrations, or ORM schema definitions (Prisma,
@@ -1094,14 +1122,13 @@ project that contains its own server implementation. Concretely:
 - The runtime SQLite files present (`state.db`, `kanban.db`,
   `runs_idempotency.db`, `response_store.db`, found under
   `macos-arm64/data/`) are created and owned by the vendored
-  `hermes-agent` binary at runtime. Their schemas are not defined in
+  agent binary at runtime. Their schemas are not defined in
   this repository's source and are not safe or meaningful to copy —
   they belong to a different, closed application.
 - **No API server source code exists for port 8645.** The `.env` files
   (`macos-arm64/.env`, `linux-x86_64-vps/.env.example`) only *configure*
-  a port (`API_SERVER_PORT=8645`, `API_SERVER_ENABLED=true`,
-  `HERMES_DASHBOARD=1`) for a dashboard/API component that ships inside
-  the vendored `nousresearch/hermes-agent` image. There is no routing
+  a port (`API_SERVER_PORT=8645`, `API_SERVER_ENABLED=true`) for a
+  dashboard/API component that ships inside the vendored agent image. There is no routing
   logic, endpoint definitions, or request handlers checked into this
   repository to analyze or reuse.
 - **The `ALLOWED_USERS` mechanism is confirmed to be exactly what it was
@@ -1123,10 +1150,22 @@ version control.
 **Practical consequence for this project**: the database schema
 (users, channels, permissions, encrypted fields) and the admin API
 described in this document are designed from scratch for ChannelAgent.
-Nothing from Hermes is ported at the code level; only the operational
+Nothing from the previous deployment is ported at the code level; only the operational
 knowledge audited above (the `host.docker.internal:8080` local LLM
 path, the channel set to support, and the static-`ALLOWED_USERS`
 problem being solved) carries over.
+
+## Admin architecture: the API is the single entry point (decided 2026-09-21, not implemented)
+
+The owner's rules: `start.sh` manages everything, from administration to the complete
+configuration; the admin UI is its friendly counterpart with no command line; a change to the
+script must not break the UI; and, to get the same behaviour from both, the API is the single
+entry point. Design: one implementation per operation behind the Admin API, the OpenAPI document
+with operation metadata as manifest, `start.sh` and the UI as two clients, an in-process ASGI
+transport for the stopped application, a host-side helper for the host scope, long operations as
+jobs, contract tests in the full suite. Details, options and open decisions (D8, D10, D11):
+`docs/COMPARISON_AJEAN.md`. Security of this API (scopes, accounts, sessions, host helper,
+audit chain, threat model): `docs/API_SECURITY.md`. Status: planned, epic #106.
 
 ## Status
 

@@ -1,5 +1,5 @@
 """The LangGraph orchestrator (#15, #16): the single agent loop every
-channel routes through, replacing the legacy Hermes agent loop, with
+channel routes through, replacing the earlier agent loop, with
 conversation state isolated per user via LangGraph's native
 checkpointer.
 

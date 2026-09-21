@@ -14,7 +14,7 @@ Paused at the user's request (out of usage credits until 2026-09-20).
 State at pause, verified facts, not narrative:
 
 - `git rev-parse HEAD` on `main` == `git rev-parse origin/main` for
-  **both** `ChannelAgent` (`db0cc3b`) and `Hermes` (`0d15191`) —
+  **both** `ChannelAgent` (`db0cc3b`) and the legacy project (`0d15191`) —
   nothing uncommitted, nothing unpushed, in either repo.
 - GitHub issues (refreshed 2026-09-20, the original "30 closed" was a
   miscount): **34 closed, 33 open** after the 2026-09-20 audit and P1 work (21 issues created, 4 reopened). `gh issue list` stops at 30 by default: always pass `--limit 300` when counting. #39, #40, #45 and #52 are implemented and verified but were closed without the user's consent, so the user had them reopened: they stay open until the user says they may be closed (`gh issue list --repo
@@ -66,7 +66,7 @@ State at pause, verified facts, not narrative:
    2026-09-18. The earlier "Franck not added" note is obsolete.
 8. Open question, tracked in #62: whether to make
    `ChannelAgent` public so the deprecation notice added to the public
-   `Hermes` repo actually resolves for outside readers.
+   the legacy repo actually resolves for outside readers.
 
 Read the rest of this file chronologically for the *why* behind any of
 the above — this section is only the *what's left*.
@@ -74,13 +74,13 @@ the above — this section is only the *what's left*.
 
 ## Security notes
 
-- `/Users/mac/Documents/Code/Hermes/macos-arm64/.env` contains a live
+- a file of the legacy project contains a live
   `API_SERVER_KEY` and a dashboard basic-auth password
-  (`HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=test`). **Neither was copied**
+  (a legacy dashboard variable). **Neither was copied**
   into ChannelAgent's `.env` — both are internal secrets scoped to the
-  vendored `hermes-agent` binary/dashboard, not credentials meant for a
+  vendored the legacy agent binary/dashboard, not credentials meant for a
   different application. ChannelAgent's `API_SERVER_KEY` was generated
-  fresh instead (a random 32-byte hex token — same shape as Hermes's
+  fresh instead (a random 32-byte hex token — same shape as the legacy project's
   key by coincidence of length, not an actual SHA-256 digest of
   anything, and there is no format requirement on it yet since the
   admin API itself isn't implemented).
@@ -96,12 +96,12 @@ the above — this section is only the *what's left*.
   material.
 - `.env.example` documents all expected settings (no real secrets).
 - `.env` (real, git-ignored, never commit): freshly generated
-  `ENCRYPTION_KEY` and `API_SERVER_KEY` (not reused from Hermes — see
+  `ENCRYPTION_KEY` and `API_SERVER_KEY` (not reused from the legacy project — see
   Security notes above), plus `TELEGRAM_BOT_TOKEN` /
   `TELEGRAM_ALLOWED_USERS` reused as-is from
-  `Hermes/macos-arm64/.env` (same bot/operator). Email and Matrix
-  fields left empty, same as in Hermes.
-- `start.sh`: adapted from Hermes's own start.sh. No per-platform
+  a file of the legacy project (same bot/operator). Email and Matrix
+  fields left empty, same as in the legacy project.
+- `start.sh`: adapted from the legacy project's own start.sh. No per-platform
   dispatch (ChannelAgent targets one Linux container everywhere);
   instead validates `.env`/`ENCRYPTION_KEY`, sets up a local venv +
   `requirements.txt`, and on macOS checks that `llama-server` answers
@@ -111,7 +111,7 @@ the above — this section is only the *what's left*.
   `ENCRYPTION_KEY` is missing.
 - `app/security/encryption.py`: Fernet encrypt/decrypt helpers.
 - `docs/ARCHITECTURE.md`: full target architecture, Mermaid diagram,
-  Hermes audit findings.
+  the legacy project audit findings.
 - `requirements.txt`: langgraph, fastapi, sqlalchemy+aiosqlite,
   cryptography, python-telegram-bot, matrix-nio, etc.
 
@@ -170,7 +170,7 @@ Next up: the `P1-high` issues (#13, #14, #17, #22-24, #26-27).
 ## #20 closed, and start.sh fixed (2026-09-18)
 
 - **#20 closed for real**: started the actual native llama-server
-  (Hermes's binary/model/flags), confirmed it directly, then ran
+  (the legacy project's binary/model/flags), confirmed it directly, then ran
   `app.graph.run_turn()` — the real code path, not a curl — inside the
   actual container and got a real completion back over
   `host.docker.internal:8080`. Documented as a reproducible check in
@@ -243,18 +243,18 @@ nothing running.
   confirmed server-side (`getUpdates` → real LLM call → `sendMessage`,
   all 200 OK) and by the user explicitly confirming they received the
   reply on their own device.
-- **Operational finding, resolved same-session**: a local Hermes
-  gateway process (`hermes_cli.main gateway run`, port 8645) was still
+- **Operational finding, resolved same-session**: a local legacy
+  gateway process (the legacy gateway command, port 8645) was still
   polling the same `TELEGRAM_BOT_TOKEN` during this test, causing
   intermittent `Conflict: terminated by other getUpdates request`
   errors — Telegram allows only one long-polling connection per bot
-  token. **The user confirmed Hermes is no longer used**, so both its
+  token. **The user confirmed the legacy project is no longer used**, so both its
   launchd services were disabled (not just killed, which
-  `KeepAlive: true` on `ai.hermes.gateway.plist` would have
+  `KeepAlive: true` on the legacy gateway plist would have
   auto-restarted):
   ```
-  launchctl unload -w ~/Library/LaunchAgents/ai.hermes.gateway.plist
-  launchctl unload -w ~/Library/LaunchAgents/com.hermes.silent-failure-watchdog.plist
+  launchctl unload -w ~/Library/LaunchAgents/<legacy gateway plist>
+  launchctl unload -w ~/Library/LaunchAgents/<legacy watchdog plist>
   ```
   Confirmed both fully stopped (`launchctl list`, `lsof -i :8645`, `ps
   aux` all empty afterward) and won't restart at next login (`-w`
@@ -263,17 +263,17 @@ nothing running.
   **Update, same session**: the user then asked to delete the `.plist`
   files outright, not just leave them unloaded. Removed:
   ```
-  rm ~/Library/LaunchAgents/ai.hermes.gateway.plist
-  rm ~/Library/LaunchAgents/com.hermes.silent-failure-watchdog.plist
+  rm ~/Library/LaunchAgents/<legacy gateway plist>
+  rm ~/Library/LaunchAgents/<legacy watchdog plist>
   ```
   Re-confirmed fully clean afterward (no files, no `launchctl` entries,
-  no processes, port 8645 free). `ai.hermes.gateway.plist` had no
-  source template in the Hermes repo (unlike the watchdog one,
-  `macos-arm64/scripts/com.hermes.silent-failure-watchdog.plist.example`)
-  — if Hermes's gateway is ever needed again, it would need
-  regenerating via Hermes's own setup tooling (`hermes gateway setup`),
-  not a file restore. The Hermes project directory itself
-  (`/Users/mac/Documents/Code/Hermes`) was not touched — only the
+  no processes, port 8645 free). the legacy gateway plist had no
+  source template in the legacy repo (unlike the watchdog one,
+  its template)
+  — if the legacy project's gateway is ever needed again, it would need
+  regenerating via its own setup tooling,
+  not a file restore. The legacy project directory itself
+  was not touched — only the
   locally-installed launchd services. No further token-sharing conflict
   is expected going forward; if it recurs, something reinstalled these
   outside this change.
@@ -363,7 +363,7 @@ added to `app/security/auth.py` alongside the existing `grant_permission`.
 original wording**: production VPS inference is a containerized
 `llama-server` (`docker-compose.prod.yml`,
 `docker/llama-server.Dockerfile`), not Ollama/vLLM. Reason: auditing
-Hermes's actual VPS setup found it deliberately dropped a
+the legacy project's actual VPS setup found it deliberately dropped a
 `llama-swap`-style multi-engine layer after a real incident (a stale
 image running silently for two weeks because that layer's update
 lifecycle was untracked) — a single always-loaded model needs none of
@@ -450,20 +450,20 @@ to be added. Values are still empty; what was given was a placeholder
 example, not real credentials (#29 still needs a real homeserver/bot
 account to implement and verify live).
 
-**Checked Hermes for reusable Email credentials, per the user's
-request — found none.** `Hermes/macos-arm64/.env`'s `EMAIL_ADDRESS`/
+**Checked the legacy project for reusable Email credentials, per the user's
+request — found none.** a file of the legacy project's `EMAIL_ADDRESS`/
 `EMAIL_PASSWORD`/`EMAIL_IMAP_HOST`/`EMAIL_SMTP_HOST` are all empty
 there too, matching the original audit finding (email was never
 actually configured in that deployment). Nothing to copy into this
 project's `.env`; #28 still needs real mailbox credentials.
 
-**Telegram config compared against Hermes**: `TELEGRAM_BOT_TOKEN`/
-`TELEGRAM_ALLOWED_USERS` already match. Hermes additionally has
+**Telegram config compared against the legacy project**: `TELEGRAM_BOT_TOKEN`/
+`TELEGRAM_ALLOWED_USERS` already match. the legacy project additionally has
 `TELEGRAM_HOME_CHANNEL`/`TELEGRAM_HOME_CHANNEL_NAME` (destination for
 cron/proactive messages) and `TELEGRAM_GROUP_ALLOWED_USERS`/
 `TELEGRAM_GROUP_ALLOWED_CHATS` (group-chat support) — **not** added
 here, since neither proactive/cron messaging nor group chats exist as
-features in ChannelAgent yet. Noted as a gap relative to Hermes, not
+features in ChannelAgent yet. Noted as a gap relative to the legacy project, not
 copied as unused config; revisit if/when either feature gets built.
 
 ## #36, #38, #37 implemented (2026-09-18, token-economy pass)
@@ -525,9 +525,9 @@ Earlier assumption was wrong: #21 (production VPS topology) doesn't
 actually need a real VPS to verify — **Docker Desktop's containers are
 real Linux** (via its VM), so any genuine Linux binary runs correctly
 in one even on this Mac. Downloaded the actual official llama.cpp
-Linux release (same asset Hermes's own download script fetches),
+Linux release (same asset the legacy project's own download script fetches),
 reused a small model already present locally
-(`Hermes/linux-x86_64-vps/models/qwen2.5-0.5b-instruct-q4_k_m.gguf`),
+(a file of the legacy project),
 and ran the real prod compose topology
 (`--platform linux/amd64`) end to end: `llama-server` container
 reached Healthy, and inside the real running `channelagent` container,
@@ -544,17 +544,17 @@ done. Every sub-issue verified with a real run at some point, not just
 code review; see each issue's closing comment for exactly what that
 was.
 
-## Hermes marked deprecated (2026-09-18)
+## The legacy project marked deprecated (2026-09-18)
 
-Per the user's instruction, `ka8t/Hermes` (public repo,
-`/Users/mac/Documents/Code/Hermes` locally) now carries a bilingual
+Per the user's instruction, the legacy repository (public repo,
+the legacy project directory locally) now carries a bilingual
 (EN/FR) deprecation notice at the top of its `README.md`, pointing to
 this repo, and its GitHub description was changed to
 `"DEPRECATED — buggy, unmaintained. See ka8t/ChannelAgent instead."`
 Pushed for real: commit `0d15191` on `origin/main`, 1 file changed, 36
 insertions — `git log`/`gh repo view` confirm both landed.
 
-**Open issue, flagged to the user, not resolved**: Hermes is public,
+**Open issue, flagged to the user, not resolved**: the legacy project is public,
 ChannelAgent is private — the notice's link is currently unreachable
 for anyone without repo access. Needs the user's call on whether to
 make ChannelAgent public (their decision, not made unilaterally here —
@@ -676,7 +676,7 @@ makes the tag unnecessary: #42.
   lines from the app logger before the fix and 5 after, and 2 new tests
   in `tests/test_logging.py` (the bug test fails on the old code).
 - **Missing model, resolved 2026-09-20:** `Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf`
-  had disappeared from `Hermes/macos-arm64/models/`. Re-downloaded from
+  had disappeared from a file of the legacy project. Re-downloaded from
   `bartowski/Meta-Llama-3.1-8B-Instruct-GGUF` (4920739232 bytes, SHA-256
   `7b064f58...557c` matching Hugging Face's published value) and loaded
   by `llama-server` with `start.sh`'s flags (health 200, real completion).

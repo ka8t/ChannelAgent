@@ -4,15 +4,12 @@
 # either needs no rebuild — just replacing the file and restarting the
 # service.
 #
-# Containerized llama-server, not Ollama/vLLM: mirrors the legacy
-# Hermes project's own production setup (same binary, same flags,
-# same OpenAI-compatible endpoint app/graph.py already talks to). That
-# choice there followed a real incident — Hermes previously ran
-# llama-swap in front of llama-server for a "swap models at runtime"
-# feature this project never uses, and llama-swap's own separate,
+# Containerized llama-server, not Ollama/vLLM: same binary and flags as the
+# Mac, same OpenAI-compatible endpoint app/graph.py already talks to. An
+# earlier deployment ran llama-swap in front of llama-server; its separate,
 # untracked update lifecycle let a VPS silently run a two-week-stale
-# llama-server through it. A single always-loaded model needs none of
-# that, so a plain runtime for the same binary loses nothing.
+# llama-server through it. Several models, if needed, are handled by
+# llama-server's own router mode (#105), not by a second tool.
 #
 # ubuntu:24.04: matches the glibc/libstdc++ ABI the official llama.cpp
 # ubuntu-x64 prebuilt release is built against.
