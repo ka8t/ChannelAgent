@@ -14,3 +14,8 @@ select = ["E", "F", "I", "UP", "B"]
 # standard, required way to use FastAPI's Depends()/Header() dependency
 # injection is exactly that pattern, so this would flag every route.
 ignore = ["B008"]
+
+# Kept-for-reuse working scripts (scripts/dev): documented in scripts/dev/README.md,
+# not held to the application style.
+[tool.ruff.lint.per-file-ignores]
+"scripts/dev/**" = ["E", "F", "I", "UP", "B"]
