@@ -734,7 +734,7 @@ users; a real completion from inside the container through
 directory owned by root (a `tmpfs` stand-in for a Linux bind mount) it exited
 with status 1 (`unable to open database file`; the clearer message above was
 added after that run and is covered by a unit test) and with the directory
-owned by 10001 it reached `healthy`. A CI step asserts the uid is 10001, not 0
+owned by 10001 it reached `healthy`. A real Linux bind mount (a directory inside Docker Desktop's Linux VM, not the macOS file sharing) was then run with `scripts/dev/rehearsals/linux_bind_mount.sh`: owned by root, exit 1 with the message naming `chown -R 10001:10001`; after the documented `chown`, `healthy`, files `-rw-------` owned by 10001. A CI step asserts the uid is 10001, not 0
 (`.github/workflows/ci.yml`); CI is disabled at the owner's request, so that
 step has not run.
 
