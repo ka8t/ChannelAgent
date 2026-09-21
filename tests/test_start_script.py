@@ -65,6 +65,8 @@ def test_show_config_creates_env_from_the_example_and_lists_every_variable(sandb
 )
 def test_show_config_never_prints_a_secret_in_full(sandbox, key):
     secret = "SECRETVALUE-0123456789-abcdef"
+    if key == "ENCRYPTION_KEY":  # --set only accepts a valid Fernet key here (#74)
+        secret = "SECR" + "A" * 39 + "="
     (sandbox / ".env").write_text((sandbox / ".env.example").read_text())
     assert _run(sandbox, "--set", f"{key}={secret}").returncode == 0
     out = _run(sandbox, "--show-config").stdout

@@ -113,6 +113,8 @@ set_config() {
   warn_if_env_is_shared
   python3 - "$key" "$value" <<'PYEOF'
 import difflib
+import os
+import re
 import sys
 
 key, value = sys.argv[1], sys.argv[2]
@@ -134,6 +136,42 @@ if key not in known:
 
 with open(path) as f:
     lines = f.readlines()
+
+# ENCRYPTION_KEY reads every encrypted value (messages, admin events, email
+# addresses, conversation checkpoints). Overwriting it makes all of them
+# unreadable, so a key already in place is never replaced here: only the
+# rotation tool re-encrypts the data under a new key (#74). It is never echoed.
+if key == "ENCRYPTION_KEY":
+    current = next((ln.split("=", 1)[1].strip() for ln in lines if ln.startswith("ENCRYPTION_KEY=")), "")
+    if current:
+        print(
+            "ENCRYPTION_KEY is already set and was NOT changed: replacing it would make every "
+            "encrypted value unreadable. Rotate it with the rotation tool, which re-encrypts the "
+            "data (python -m app.admin.rekey, see docs/ARCHITECTURE.md, "
+            "'Encryption key: backup, loss and rotation').",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{43}=", value):  # 32 bytes, url-safe base64
+        print(
+            "ENCRYPTION_KEY was NOT changed: it must be a Fernet key (32 bytes, url-safe base64, "
+            "44 characters). Generate one with: python3 -c \"import base64, os; "
+            "print(base64.urlsafe_b64encode(os.urandom(32)).decode())\"",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+# Every change keeps the previous .env as .env.bak (one generation, mode 600, git-ignored)
+# so a bad edit can be undone. Written only once the change is accepted.
+with open(path, "rb") as f:
+    previous = f.read()
+fd = os.open(path + ".bak", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+try:
+    os.fchmod(fd, 0o600)
+    os.write(fd, previous)
+finally:
+    os.close(fd)
+print("Previous .env saved as .env.bak (mode 600).")
 
 found = False
 for i, line in enumerate(lines):

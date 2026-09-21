@@ -110,6 +110,13 @@ of these variables directly:
 ./start.sh --set LLAMA_PORT=8081  # add or update one variable in .env
 ```
 
+Every successful `--set` first keeps the previous file as `.env.bak` (one
+generation, mode 600, git-ignored): to undo a bad edit, copy it back over
+`.env`. `ENCRYPTION_KEY` is protected: once it holds a value, `--set` refuses
+to replace it (that would make every encrypted value unreadable), and it
+points to the rotation tool (`python -m app.admin.rekey`) instead. Setting it
+while it is empty accepts only a valid Fernet key.
+
 ## Start
 
 Start `llama-server` natively on the Mac first (see Prerequisites and

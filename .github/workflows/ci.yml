@@ -51,7 +51,7 @@ jobs:
       - name: The image starts and the Admin API answers only with the key
         run: |
           KEY=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
-          API_KEY=ci-key-0123456789abcdef
+          API_KEY=$(openssl rand -hex 32)
           docker run -d --name ca-ci -e ENCRYPTION_KEY="$KEY" -e API_SERVER_KEY=$API_KEY \
             -e API_SERVER_PORT=8700 -e TELEGRAM_ALLOWED_USERS=111 -p 127.0.0.1:8700:8700 channelagent:ci
           for i in $(seq 1 40); do curl -s -o /dev/null http://127.0.0.1:8700/users && break; sleep 1; done

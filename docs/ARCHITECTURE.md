@@ -462,6 +462,19 @@ each time. An administrator resets it without touching SQL:
   checkpoint is written before the model runs), so a retry after a reset
   can start with that message already present.
 
+### start.sh --set and the encryption key (#74)
+
+`./start.sh --set` can change any variable of `.env.example`, with two
+safeguards. Every accepted change first copies the current `.env` to
+`.env.bak` (one generation, mode 600, covered by `.gitignore`'s `.env.*`), so
+a bad edit can be undone; a refused command changes nothing, not even the
+backup. `ENCRYPTION_KEY` is never replaced through it: with a non-empty key
+the command exits non-zero and points to the rotation tool
+(`python -m app.admin.rekey`), because a different key makes every encrypted
+value unreadable; with an empty key only a valid Fernet key (44 characters,
+url-safe base64 ending in `=`) is accepted. The key is never echoed. The
+value rules for the other variables are tracked in #75.
+
 ### Dependency lock (#69)
 
 `requirements.txt` holds the exact version of every package (direct and
