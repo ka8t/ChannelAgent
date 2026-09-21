@@ -354,6 +354,11 @@ scope the answer is exactly 403.
   before the application runs, and cut while streaming when no length is declared.
 - **Time**: over `API_REQUEST_TIMEOUT_SECONDS` (60) gets 504.
 
+Generated clients rely on the OpenAPI contract (#133): `GET /whoami` (actor, scope, version),
+`GET /status` (components, database revision and size, engine and its model), `limit`, `offset` and an
+`X-Total-Count` header on the simple lists, a tag and the documented errors on every route, and the
+declared `API_VERSION`. What each open issue must add: `docs/API_COVERAGE.md`.
+
 An unexpected error returns `{"detail": "Internal server error", "error_id": ...}`; the
 exception text, which can hold a path, a query or a value, goes to the redacted log under
 that id. Request bodies of the Admin API schemas refuse unknown fields (422).

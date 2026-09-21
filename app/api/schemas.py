@@ -152,3 +152,35 @@ class AccessRequestOut(BaseModel):
     requested_at: datetime
     resolved_at: datetime | None
     resolved_by: str | None
+
+
+class WhoAmIOut(BaseModel):
+    actor: str
+    scope: str
+    api_version: str
+
+
+class ComponentStatus(BaseModel):
+    healthy: bool
+    seconds_since_success: float
+
+
+class DatabaseStatus(BaseModel):
+    kind: str
+    revision: str | None
+    size_bytes: int | None
+
+
+class EngineStatus(BaseModel):
+    reachable: bool
+    model: str | None = None
+    n_ctx: int | None = None
+
+
+class StatusOut(BaseModel):
+    api_version: str
+    started_at: datetime
+    uptime_seconds: int
+    components: dict[str, ComponentStatus]
+    database: DatabaseStatus
+    engine: EngineStatus

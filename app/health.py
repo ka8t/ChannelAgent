@@ -49,6 +49,16 @@ def mark(name: str) -> None:
         _components[name][1] = time.monotonic()
 
 
+def snapshot() -> dict[str, dict[str, float | bool]]:
+    """Each expected component with the age of its last success and whether that is
+    still within its limit (#133)."""
+    now = time.monotonic()
+    return {
+        name: {"seconds_since_success": round(now - last, 1), "healthy": now - last <= max_age}
+        for name, (max_age, last) in sorted(_components.items())
+    }
+
+
 def stale_components() -> list[str]:
     now = time.monotonic()
     return sorted(n for n, (max_age, last) in _components.items() if now - last > max_age)

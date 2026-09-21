@@ -346,6 +346,9 @@ C5, E12 and all of section D of the tables (installation and system).
 
 ## Issue map (created 2026-09-21)
 
+API completeness for generated clients: #133 (P1). The routes each issue must add:
+`docs/API_COVERAGE.md` section 5.
+
 Epics: #106 (admin API and UI), #107 (MCP). P0: #103. P1 in the owner's working order: #108 API
 security baseline, #109 API as single entry point, #104 models, #110 per-agent configuration,
 #105 routing, #115 to #117 MCP 1/7 to 3/7, #114 persistent memory, #113 scheduled backup, #111

@@ -22,18 +22,23 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.admin import service
 from app.api.deps import verify_api_key
+from app.api.errors import error_responses
 from app.api.protect import ProtectMiddleware
 from app.api.routes import router
 from app.api.scopes import Scope, require, verify_scopes
+from app.api.status import router as status_router
+from app.api.version import API_VERSION
 
 app = FastAPI(
     title="ChannelAgent Admin API",
+    version=API_VERSION,
     dependencies=[Depends(verify_api_key)],
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
 )
 app.include_router(router)
+app.include_router(status_router)
 app.add_middleware(ProtectMiddleware)
 
 logger = logging.getLogger("channelagent.api")
@@ -52,12 +57,22 @@ app.add_exception_handler(service.ConflictError, _error(409))
 app.add_exception_handler(service.InvalidInputError, _error(422))
 
 
-@app.get("/openapi.json", dependencies=[require(Scope.READ)])
+@app.get(
+    "/openapi.json",
+    dependencies=[require(Scope.READ)],
+    tags=["system"],
+    responses=error_responses(),
+)
 async def openapi_json() -> dict:
     return get_openapi(title=app.title, version=app.version, routes=app.routes)
 
 
-@app.get("/docs", dependencies=[require(Scope.READ)])
+@app.get(
+    "/docs",
+    dependencies=[require(Scope.READ)],
+    tags=["system"],
+    responses=error_responses(),
+)
 async def docs() -> HTMLResponse:
     return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Docs")
 
