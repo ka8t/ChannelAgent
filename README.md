@@ -19,9 +19,8 @@ orchestrator, Docker packaging including a real production VPS
 topology test). The Admin API (epic #5) and the agent/request/logging
 mechanics with an interactive console (`./start.sh --admin`, epic #35)
 are both done. Telegram (#27) and Email (#28) adapters are live and
-verified with real end-to-end round trips; Matrix (#29) is not yet
-implemented, blocked on real credentials. 378 automated tests, 0
-failing. Full picture, always current: `gh issue list --repo
+verified with real end-to-end round trips; Matrix (#29) was abandoned on 2026-09-21 and is not
+implemented. 1052 automated tests, 0 failing. Full picture, always current: `gh issue list --repo
 ka8t/ChannelAgent`; `CLAUDE.md`'s "Session paused" entry at the top has
 the exact resume checklist.
 
@@ -161,7 +160,7 @@ docker compose up --build
 each part that is configured and logs which ones are disabled: the
 Telegram adapter (needs `TELEGRAM_BOT_TOKEN`), the Email adapter (needs
 `EMAIL_IMAP_HOST`, `EMAIL_USERNAME` and `EMAIL_PASSWORD`) and the Admin
-API (needs `API_SERVER_KEY`). The Matrix adapter is not implemented yet.
+API (needs `API_SERVER_KEY`). There is no Matrix adapter: the project was abandoned on 2026-09-21 (#29).
 
 `start.sh` still exists for local (non-Docker) development: it copies
 `.env.example` to `.env` if missing, creates a Python virtualenv,

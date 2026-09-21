@@ -79,7 +79,8 @@ graph TD
 
 ### Channel adapters
 
-Each adapter (Telegram, Email, Matrix/Element) is responsible only for
+Each adapter (Telegram and Email; a Matrix/Element adapter was planned and
+abandoned by the owner on 2026-09-21, #29) is responsible only for
 transport: receiving a raw platform-specific message and normalizing it
 into the standard event schema before handing it to the router. Adapters
 do not implement authorization or business logic themselves.

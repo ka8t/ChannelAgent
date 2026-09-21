@@ -175,7 +175,7 @@ Docker container. Full target architecture and diagram:
 Facts, refreshed when they change; the issues have the detail.
 
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
-  adapters are live; Matrix (#29) and a dedicated bot mailbox (#42) were set
+  adapters are live; Matrix (#29) was abandoned and a dedicated bot mailbox (#42) set
   aside by the owner on 2026-09-21.
 - Last full test suite: 1052 passed, 0 failed (128 s), `ruff check .` clean
   (2026-09-21, working tree after cef5596: #86, #87, #89, #90 done, uncommitted).
