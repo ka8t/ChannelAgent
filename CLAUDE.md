@@ -178,7 +178,7 @@ Facts, refreshed when they change; the issues have the detail.
   adapters are live; Matrix (#29) and a dedicated bot mailbox (#42) were set
   aside by the owner on 2026-09-21.
 - Last full test suite: 1030 passed, 0 failed (120 s), `ruff check .` clean
-  (2026-09-21, on the working tree that includes the P3 batch below).
+  (2026-09-21, on cef5596).
   Targeted runs while working; the full suite once per batch, before a commit
   (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).
@@ -186,7 +186,7 @@ Facts, refreshed when they change; the issues have the detail.
   still run.
 - Open work by tier: all P0 closed. P1: #6 (epic, needs #29), #72 (owner
   checklist), #84 (fixed and pushed, waits for the owner to close). P2: #29
-  (set aside). P3 implemented in the working tree (not committed), each with a
+  (set aside). P3 implemented and pushed (cef5596), each with a
   status comment and the closing left to the owner: #47, #48, #56, #57, #60,
   #64, #65, #70, #71 (this file), #77, #78, #85 and #93 (P2, found on the way); open points: #86 to #102.
   Set aside: #42. #61 has its quoted results (checks 4 and 7 not run live, by
