@@ -1,7 +1,8 @@
-# Secret scanning (#67, #73). Three exact values are allowed because they are
-# not secrets: the throwaway encryption key and the throwaway API key the tests
-# use, and the dummy API key the CI job used to start the image (the job now
-# generates one, the old value stays in the history). Allowing the exact
+# Secret scanning (#67, #73). Exact values are allowed because they are
+# not secrets: the throwaway encryption key, the throwaway API keys, the sha256
+# of "test" and a fake Matrix token that the tests use, and the dummy API key
+# the CI job used to start the image (the job now generates one, the old value
+# stays in the history). Allowing the exact
 # values, and not whole files, means a real key pasted next to them is still
 # caught.
 title = "ChannelAgent gitleaks configuration"
@@ -15,4 +16,7 @@ regexes = [
   'PmKTledxEc-gdO4tty5QO4PjB48zp_GqWMVIpigdwEg=',
   'ci-key-0123456789abcdef',
   'Zq8vT3mK9xW2pL7nR4bY6cH1dF5gJ0sA',
+  'SECRk3Jf9Zq2Lm8Xw5Tn7Vb4Hd6Gs1Yc',
+  '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+  'syt_abc123_def456',
 ]
