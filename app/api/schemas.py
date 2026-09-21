@@ -184,3 +184,49 @@ class StatusOut(BaseModel):
     components: dict[str, ComponentStatus]
     database: DatabaseStatus
     engine: EngineStatus
+
+
+class JobOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    kind: str
+    status: str
+    progress: float | None
+    message: str | None
+    result: dict | None
+    error: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BackupOut(BaseModel):
+    name: str
+    kind: str
+    size_bytes: int
+    created_at: datetime | None
+
+
+class ConfigEntryOut(BaseModel):
+    """One variable. The value of a secret is never returned: `value` is null and
+    `is_set` says whether one is in place.
+    """
+
+    key: str
+    value: str | None
+    is_set: bool
+    secret: bool
+
+
+class ConfigSetIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str
+    value: str
+
+
+class ConfigSetOut(BaseModel):
+    """What changed, never the value."""
+
+    key: str
+    changed: bool
+    backup: str
+    applies: str

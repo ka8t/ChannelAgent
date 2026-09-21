@@ -21,8 +21,10 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from app.admin import service
+from app.api.config_routes import router as config_router
 from app.api.deps import verify_api_key
 from app.api.errors import error_responses
+from app.api.operations import router as operations_router
 from app.api.protect import ProtectMiddleware
 from app.api.routes import router
 from app.api.scopes import Scope, require, verify_scopes
@@ -39,6 +41,8 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(status_router)
+app.include_router(operations_router)
+app.include_router(config_router)
 app.add_middleware(ProtectMiddleware)
 
 logger = logging.getLogger("channelagent.api")
@@ -64,6 +68,7 @@ app.add_exception_handler(service.InvalidInputError, _error(422))
     responses=error_responses(),
 )
 async def openapi_json() -> dict:
+    """The OpenAPI description of this API."""
     return get_openapi(title=app.title, version=app.version, routes=app.routes)
 
 
@@ -74,6 +79,7 @@ async def openapi_json() -> dict:
     responses=error_responses(),
 )
 async def docs() -> HTMLResponse:
+    """The interactive documentation page."""
     return get_swagger_ui_html(openapi_url="/openapi.json", title=f"{app.title} - Docs")
 
 

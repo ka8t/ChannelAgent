@@ -16,6 +16,12 @@
 #                                      .env value (secrets masked)
 #   ./start.sh --set KEY=VALUE     -> add or update one variable in .env
 #
+# Plus the command line of the Admin API (#109): one command per API route, generated from
+# the routes themselves, the same handlers the admin UI uses. It talks to the running
+# application, or calls the handlers in process when it is stopped:
+#   ./start.sh --describe [--json]        -> every command, with its method, path and scope
+#   ./start.sh --api COMMAND [--flag value ...] [--json]
+#
 # Plus the interactive admin console (#41) — users, access requests,
 # agents, action logs — over the local venv, no llama-server needed:
 #   ./start.sh --admin
@@ -72,45 +78,16 @@ show_config() {
   fi
   warn_if_env_is_shared
   python3 - <<'PYEOF'
-SENSITIVE = {
-    "ENCRYPTION_KEY",
-    "API_SERVER_KEY",
-    "TELEGRAM_BOT_TOKEN",
-    "EMAIL_PASSWORD",
-    "MATRIX_ACCESS_TOKEN",
-    "MATRIX_BOT_ACCESS_TOKEN",
-}
+import os
+import sys
 
-
-def load(path):
-    values = {}
-    try:
-        with open(path) as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                # --set writes a value with special characters in single quotes (#80)
-                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
-                    value = value[1:-1]
-                values[key] = value
-    except FileNotFoundError:
-        pass
-    return values
-
-
-example = load(".env.example")
-current = load(".env")
-
-print("Current configuration (keys from .env.example, values from .env):\n")
-for key in example:
-    value = current.get(key, "")
-    if key in SENSITIVE:
-        display = f"{value[:4]}...(hidden)" if value else "(not set)"
-    else:
-        display = value if value else "(not set)"
-    print(f"  {key:<28} {display}")
+sys.path.insert(0, os.path.join(os.getcwd(), "app"))
+try:
+    import settings_rules
+except ImportError as exc:
+    print(f"The configuration could not be shown: the rules module could not be loaded ({exc}).", file=sys.stderr)
+    sys.exit(1)
+sys.exit(settings_rules.cli_show(".env", ".env.example"))
 PYEOF
 }
 
@@ -131,87 +108,19 @@ set_config() {
   fi
   warn_if_env_is_shared
   python3 - "$key" "$value" <<'PYEOF'
-import difflib
 import os
 import sys
 
-key, value = sys.argv[1], sys.argv[2]
-path = ".env"
-
-# Only variables the application knows (the ones in .env.example): a typo
-# such as LLAMA_PROT would otherwise be written silently and ignored.
-known = []
-with open(".env.example") as f:
-    for line in f:
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            known.append(line.partition("=")[0])
-if key not in known:
-    close = difflib.get_close_matches(key, known, n=3)
-    hint = f" Did you mean: {', '.join(close)}?" if close else ""
-    print(f"unknown variable '{key}'.{hint} Known variables: {', '.join(known)}", file=sys.stderr)
-    sys.exit(1)
-
-with open(path) as f:
-    lines = f.readlines()
-
-# ENCRYPTION_KEY reads every encrypted value (messages, admin events, email
-# addresses, conversation checkpoints). Overwriting it makes all of them
-# unreadable, so a key already in place is never replaced here: only the
-# rotation tool re-encrypts the data under a new key (#74). It is never echoed.
-if key == "ENCRYPTION_KEY":
-    current = next((ln.split("=", 1)[1].strip() for ln in lines if ln.startswith("ENCRYPTION_KEY=")), "")
-    if current.strip("'\"") != "":  # ENCRYPTION_KEY='' is empty
-        print(
-            "ENCRYPTION_KEY is already set and was NOT changed: replacing it would make every "
-            "encrypted value unreadable. Rotate it with ./start.sh --rekey, which re-encrypts the "
-            "data (or python -m app.admin.rekey by hand, see docs/ARCHITECTURE.md, "
-            "'Encryption key: backup, loss and rotation').",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-# The value rules (ports, hosts, URLs, key strength, the Fernet format...) and how a
-# value is written to .env are app/settings_rules.py, the same module the
-# application imports for the API key rule (#75, #80). Nothing is written when it
-# says no, or when it cannot be loaded.
+# The checks, the rules and the write are app/settings_rules.py, the module the Admin API
+# route PATCH /config uses too (#109): the script and the API cannot disagree. Nothing is
+# written when it says no, or when it cannot be loaded.
 sys.path.insert(0, os.path.join(os.getcwd(), "app"))
 try:
     import settings_rules
 except ImportError as exc:
-    print(f"{key} was NOT changed: the value rules could not be loaded ({exc}).", file=sys.stderr)
+    print(f"{sys.argv[1]} was NOT changed: the value rules could not be loaded ({exc}).", file=sys.stderr)
     sys.exit(1)
-reason = settings_rules.validate(key, value)
-if reason:
-    print(f"{key} was NOT changed: the value {reason}", file=sys.stderr)
-    sys.exit(1)
-written = settings_rules.format_value(value)
-
-# Every change keeps the previous .env as .env.bak (one generation, mode 600, git-ignored)
-# so a bad edit can be undone. Written only once the change is accepted.
-with open(path, "rb") as f:
-    previous = f.read()
-fd = os.open(path + ".bak", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-try:
-    os.fchmod(fd, 0o600)
-    os.write(fd, previous)
-finally:
-    os.close(fd)
-print("Previous .env saved as .env.bak (mode 600).")
-
-found = False
-for i, line in enumerate(lines):
-    if line.startswith(f"{key}="):
-        lines[i] = f"{key}={written}\n"
-        found = True
-        break
-if not found:
-    if lines and not lines[-1].endswith("\n"):
-        lines[-1] += "\n"
-    lines.append(f"{key}={written}\n")
-
-with open(path, "w") as f:
-    f.writelines(lines)
+sys.exit(settings_rules.cli_set(".env", ".env.example", sys.argv[1], sys.argv[2]))
 PYEOF
   echo "==> Set ${key} in .env."
   # Settings are read once, at startup. Nothing is restarted automatically:
@@ -378,6 +287,8 @@ case "${1:-}" in
   --admin) MODE="admin" ;;
   --restore) MODE="restore" ;;
   --rekey) MODE="rekey" ;;
+  --describe) MODE="describe" ;;
+  --api) MODE="api" ;;
 esac
 
 echo "==> ChannelAgent start.sh (mode: $MODE)"
@@ -427,6 +338,18 @@ if [ "$MODE" = "rekey" ]; then
   exec env -u ENCRYPTION_KEY -u OLD_ENCRYPTION_KEY python3 -m app.admin.rekey_guided "$@"
 fi
 
+# --- The Admin API's command line (#109): the client is generated from the API's routes ---
+if [ "$MODE" = "describe" ]; then
+  setup_venv
+  shift
+  exec python3 -m app.admin.client describe "$@"
+fi
+if [ "$MODE" = "api" ]; then
+  setup_venv
+  shift
+  exec python3 -m app.admin.client "$@"
+fi
+
 # --- Restore a backup: same venv, no llama-server, the application must be stopped ---
 if [ "$MODE" = "restore" ]; then
   setup_venv
@@ -443,7 +366,10 @@ if [ "$(uname -s)" = "Darwin" ]; then
        && [ -n "${MODEL_FILE:-}" ] && [ -f "${MODELS_DIR:-}/${MODEL_FILE}" ]; then
     echo "==> llama-server not running — starting it (loading the model can take a while)."
     mkdir -p logs
-    nohup "${LLAMA_SERVER_BIN}" \
+    # A minimal environment (#109): the engine needs none of the secrets of .env, which
+    # this script exported above, and a child process must not inherit them.
+    nohup env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" \
+      "${LLAMA_SERVER_BIN}" \
       --port "${LLAMA_PORT}" \
       --host 127.0.0.1 \
       --model "${MODELS_DIR}/${MODEL_FILE}" \

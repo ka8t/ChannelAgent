@@ -14,7 +14,9 @@ Messages never contain the value (it may be a secret).
 
 from __future__ import annotations
 
+import difflib
 import ipaddress
+import os
 import re
 import sys
 from urllib.parse import urlparse
@@ -254,7 +256,164 @@ def validate(key: str, value: str) -> str | None:
     return _unrepresentable(value) or meaning_error(key, value)
 
 
+# --- reading and writing .env (#109): the one implementation behind `./start.sh --show-config`,
+# `./start.sh --set` and the Admin API routes GET and PATCH /config. ---
+
+# Values never shown in clear. The names are kept as `start.sh` always had them.
+SENSITIVE = frozenset(
+    {
+        "ENCRYPTION_KEY",
+        "API_SERVER_KEY",
+        "TELEGRAM_BOT_TOKEN",
+        "EMAIL_PASSWORD",
+        "MATRIX_ACCESS_TOKEN",
+        "MATRIX_BOT_ACCESS_TOKEN",
+    }
+)
+
+
+class ConfigError(Exception):
+    """A change that was refused. `kind` is one of `unknown`, `key_protected`, `invalid`."""
+
+    def __init__(self, message: str, kind: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def read_env(path: str) -> dict:
+    """KEY -> value of the assignments in `path`, quotes removed (#80). {} if missing."""
+    values = {}
+    try:
+        with open(path) as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+                    value = value[1:-1]
+                values[key] = value
+    except FileNotFoundError:
+        pass
+    return values
+
+
+def example_keys(example_path: str) -> list:
+    """The variables the application knows: the ones of .env.example, in its order."""
+    return list(read_env(example_path))
+
+
+def config_entries(env_path: str, example_path: str) -> list:
+    """One entry per known variable: key, value (as in .env, "" if unset), is_set, secret."""
+    current = read_env(env_path)
+    return [
+        {
+            "key": key,
+            "value": current.get(key, ""),
+            "is_set": bool(current.get(key, "")),
+            "secret": key in SENSITIVE,
+        }
+        for key in example_keys(example_path)
+    ]
+
+
+def format_config(env_path: str, example_path: str) -> str:
+    """The text of `./start.sh --show-config`. A secret shows its first four characters."""
+    lines = ["Current configuration (keys from .env.example, values from .env):\n"]
+    for entry in config_entries(env_path, example_path):
+        value = entry["value"]
+        if entry["secret"]:
+            display = f"{value[:4]}...(hidden)" if value else "(not set)"
+        else:
+            display = value if value else "(not set)"
+        lines.append(f"  {entry['key']:<28} {display}")
+    return "\n".join(lines)
+
+
+def set_config(
+    env_path: str, example_path: str, key: str, value: str, allow_initial_key: bool = False
+) -> dict:
+    """Write `key=value` to .env after the same checks whoever asks (#74, #75, #80): a known
+    variable, ENCRYPTION_KEY never replaced, the value rules, the previous file kept as
+    `.env.bak` (mode 600). Returns {"backup": name}; raises ConfigError, writing nothing.
+    `allow_initial_key` lets `start.sh` put a first key in an empty ENCRYPTION_KEY; the API
+    never sets it (only the rekey job changes it).
+    """
+    known = example_keys(example_path)
+    if key not in known:
+        close = difflib.get_close_matches(key, known, n=3)
+        hint = f" Did you mean: {', '.join(close)}?" if close else ""
+        raise ConfigError(
+            f"unknown variable '{key}'.{hint} Known variables: {', '.join(known)}", "unknown"
+        )
+    with open(env_path) as f:
+        lines = f.readlines()
+    if key == "ENCRYPTION_KEY":
+        current = next(
+            (ln.split("=", 1)[1].strip() for ln in lines if ln.startswith("ENCRYPTION_KEY=")), ""
+        )
+        if current.strip("'\"") != "":
+            raise ConfigError(
+                "ENCRYPTION_KEY is already set and was NOT changed: replacing it would make every "
+                "encrypted value unreadable. Rotate it with ./start.sh --rekey, which re-encrypts "
+                "the data (or python -m app.admin.rekey by hand, see docs/ARCHITECTURE.md, "
+                "'Encryption key: backup, loss and rotation').",
+                "key_protected",
+            )
+        if not allow_initial_key:
+            raise ConfigError(
+                "ENCRYPTION_KEY cannot be set through this route: only ./start.sh --set on an "
+                "empty key, or the rekey job, changes it.",
+                "key_protected",
+            )
+    reason = validate(key, value)
+    if reason:
+        raise ConfigError(f"{key} was NOT changed: the value {reason}", "invalid")
+    written = format_value(value)
+
+    with open(env_path, "rb") as f:
+        previous = f.read()
+    backup = env_path + ".bak"
+    fd = os.open(backup, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, previous)
+    finally:
+        os.close(fd)
+
+    for i, line in enumerate(lines):
+        if line.startswith(f"{key}="):
+            lines[i] = f"{key}={written}\n"
+            break
+    else:
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        lines.append(f"{key}={written}\n")
+    with open(env_path, "w") as f:
+        f.writelines(lines)
+    return {"backup": os.path.basename(backup)}
+
+
+def cli_show(env_path: str, example_path: str) -> int:
+    print(format_config(env_path, example_path))
+    return 0
+
+
+def cli_set(env_path: str, example_path: str, key: str, value: str) -> int:
+    try:
+        result = set_config(env_path, example_path, key, value, allow_initial_key=True)
+    except ConfigError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(f"Previous .env saved as {result['backup']} (mode 600).")
+    return 0
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 4 and argv[1] == "--show":
+        return cli_show(argv[2], argv[3])
+    if len(argv) == 6 and argv[1] == "--set":
+        return cli_set(argv[2], argv[3], argv[4], argv[5])
     if len(argv) != 2:
         print("usage: printf %s VALUE | python3 app/settings_rules.py KEY", file=sys.stderr)
         return 2

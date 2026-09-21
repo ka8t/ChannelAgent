@@ -115,6 +115,8 @@ What runs, and how to stop it (#77):
 
 ```bash
 ./start.sh --status               # app (container or native), Admin API, llama-server
+./start.sh --describe             # every command of the Admin API command line (--json for the manifest)
+./start.sh --api COMMAND [--flag value ...]   # one command per API route, e.g. --api list-users --json
 ./start.sh --stop                 # stop the native app or the container
 ./start.sh --stop --all           # ... and the llama-server this script started
 ```

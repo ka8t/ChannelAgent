@@ -363,6 +363,30 @@ An unexpected error returns `{"detail": "Internal server error", "error_id": ...
 exception text, which can hold a path, a query or a value, goes to the redacted log under
 that id. Request bodies of the Admin API schemas refuse unknown fields (422).
 
+**Command line, jobs and configuration (#109).** `./start.sh --describe [--json]` and
+`./start.sh --api COMMAND [--flag value ...] [--json]` run `python -m app.admin.client`, a client
+generated from the API's own routes (`app/admin/manifest.py`): one command per route, its flags from
+the route's parameters and body, its help from the route's docstring, so a new route is a new
+command with no client code. It reaches the API by HTTP when the application listens on the API
+port, or in process (the same handlers through an ASGI transport, no server) when it is stopped
+(`--transport auto|http|inprocess`). A route that returns `202` starts a job (`app/admin/jobs.py`:
+id, status, progress, cancel; `GET /jobs`, `GET /jobs/{id}`, `POST /jobs/{id}/cancel`); the script
+waits for it, and an in-process job is always waited for because it cannot outlive the command.
+`POST /backups` is the first job. A script action is recorded with the actor `cli:<operating-system
+user>` (header `X-Client`), any other caller as `api`; it is a label, not a proof, while the key is
+shared.
+
+`GET /config` and `PATCH /config` read and write `.env` with the code `./start.sh --show-config` and
+`./start.sh --set` run (`app/settings_rules.py`, standard library only, so it works before any
+virtualenv exists): a secret is never returned (`value` is null, `is_set` says whether one is in
+place) and never echoed, the previous file is kept as `.env.bak`, and `ENCRYPTION_KEY` is refused
+through the API (409): only `./start.sh --set` on an empty key or the rekey changes it. Where there
+is no `.env` (the application in its container) the routes answer 409: the configuration belongs to
+the host and is served there by the host helper (#111). `./start.sh --status` and `--stop` stay in
+bash: they act on processes and containers and must work when no API can, which is the host scope.
+The engine started by `start.sh` gets a cleared environment (`env -i`, only `PATH`, `HOME`,
+`TMPDIR`, `LANG`), so it does not inherit the secrets of `.env`.
+
 **Rotating API_SERVER_KEY.**
 1. Generate a new key: `openssl rand -hex 32`.
 2. Put it in `.env` (`./start.sh --set API_SERVER_KEY=<value>`).
