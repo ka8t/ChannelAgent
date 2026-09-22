@@ -988,6 +988,7 @@ and scripts that ran turns on the real default database once `run_turn` read its
 turn (mutation check) and add a test for every survivor, validate on the real machine, post a status
 comment with numbers on the issue, leave it open. Commit and push only when the owner says so.
 
-**Owner steps left**: delete the earlier project's copy of the model and the engine bundle (the
-permission system blocked it; the command is in the #103 comment); rebuild the container (it still
-serves the API of before #108); decide on closing issues; commit the #110 batch.
+**Owner steps**: the earlier project's copy of the model and the engine bundle are gone (removed by
+the owner) and the container was rebuilt and recreated from the tree at `527c4be` (image `152a1e0bc63b`,
+healthy 7 s after the start, the real database migrated to `b11c1796e218` with users 2, agents 3, action
+logs 28 unchanged). Left for the owner: the decision on closing issues.

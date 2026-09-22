@@ -22,6 +22,9 @@ real code for good.
 |---|---|
 | `mutation_check.py SPEC` | Generic runner: applies each mutation of a spec, runs its tests, restores the files, lists survivors. |
 | `mutations/spec_issue_*.py` | Specs for the runner (#60, #65, #70, #85). |
+| `mutations/issue_1xx_2026-09-21.py` | Mutation checks of #108, #109, #110, #133 to #137 (the controls of the admin API, the command line, the models and the agent settings); run from the repository root. |
+| `tools/verify_session_issues.py` | Fresh end-to-end check of #103, #108, #109, #110, #133 and #104 (#134 to #138) against the current tree, the live container and the live engine: 40 checks, one PASS or FAIL line each. Its only write to the live application is one backup file. |
+| `tools/create_plan_issues_2026-09-21.py` | Record of the script that created the sub-issues of the 2026-09-21 plan; not to be re-run. |
 | `mutations/issue_*.py` | Earlier self-contained mutation scripts, one per issue (#47 to #84); run them directly. |
 | `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78, #89, #91); see `rehearsals/README.md`. |
 | `tools/verify_closed_issues.py` | Fresh end-to-end check of closed issues on a throwaway database and a mock model. |

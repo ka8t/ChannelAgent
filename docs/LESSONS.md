@@ -61,6 +61,88 @@ found; `CLAUDE.md` holds the short version that is loaded in every session.
     `.env` modified by a test of `start.sh`; a full test suite run for every issue;
     long silences during long runs (say what is running, in a few words).
 
+## Session of 2026-09-21 (evening): shell, measurement, tests, git
+
+Owner, 2026-09-21: "tu fais beaucoup d'erreurs. retiens les ainsi que leur resolution". Each
+entry names the error, what it cost and the rule; the skills in `.claude/skills/` carry the rules
+as procedures (`shell-traps`, `measure-first`, `issue-workflow`, `mutation-check`,
+`commit-and-push`, `test-conventions`).
+
+### Shell and tooling (skill `shell-traps`)
+
+16. **A zsh loop variable named `path` overwrote `PATH`** (`for path in ...`): `curl` and
+    `python3` vanished in the middle of a command. *Rule:* never use a name zsh ties to
+    something (`path`, `status`, `pipestatus`, `fpath`, `argv`); use `ep`, `f`, `name`.
+17. **Unquoted words zsh expands**: `/logs?limit=1` and `--include=*.go` ("no matches found"),
+    `echo =====` ("===== not found"). *Rule:* quote every URL, glob and separator; print a
+    separator with `printf '%s\n' ---`.
+18. **A bash idiom in zsh**: `${PIPESTATUS[0]}` gave an empty exit code. *Rule:* when the exit
+    code matters, run the command without a pipe (output to a file) and read `$?`.
+19. **A pipe ending in `grep` printed nothing** (the RTK hook summarises `grep`, `ps` and
+    `docker logs`); I took silence for a result. *Rule:* redirect to a file and read it, or
+    use Python.
+20. **Commands longer than the tool timeout** were moved to the background five times (a full
+    suite of 9 minutes, a script that hung). *Rule:* run anything that may pass two minutes
+    detached, output to a file, poll it; put a hard timeout inside the script itself.
+21. **A background job in a script ignores SIGINT**, so an "interrupt at 50%" test never
+    interrupted. *Rule:* drive the process from Python (`Popen`, `send_signal`).
+22. **A retry of an irreversible deletion outside the repository** after the permission system
+    blocked it. *Rule:* do not retry or route around a block; say what was blocked and give
+    the exact command for the owner to type with `!`.
+
+### Measurement (skill `measure-first`)
+
+23. **A method that could not see what it measured** (`ps eww` shows no environment on this
+    macOS): the control printed 0 as well, and I had first reported "0 secrets". *Rule:* run
+    every new method on a known positive before trusting a zero; to see a child's environment
+    make the child print it (`env`).
+24. **My own instrument blocked what it observed**: the test guard refused `fe80::1%lo0` (an
+    address `localhost` also has on macOS) and `b'localhost'` (asyncio passes host names as
+    bytes), and a 3 minute hang looked like an application defect. *Rule:* try a new
+    instrument on a known-good case (the engine on localhost) before the real run.
+25. **Tests that asserted my guess instead of the observed behaviour**: a 3 MiB file that was
+    3,145,732 bytes; a dropped stream expected to keep exactly half (httpx hands over whole
+    blocks); 22 routes counted by hand, 23 counted by a command; `is_global` expected to
+    refuse multicast and NAT64 (it does not); `posint` expected to accept 64 GiB; an
+    exception raised in ASGI `receive` expected to reach the middleware (FastAPI turned it into
+    a 400); a comparison run against a copy of the database whose `backups/` directory is a
+    different, empty one. *Rule:* probe first with a one-line command, then assert; count with
+    a command; a comparison runs on the same real path on both sides.
+26. **A wrong name from memory** (`list-backups` for the generated `list-database-backups`).
+    *Rule:* take names from the source of truth (`./start.sh --describe`), not memory.
+
+### Tests and mutation checks (skills `test-conventions`, `mutation-check`)
+
+27. **Holes only a mutation exposed**: `resolve()` before the link check let a delete follow a
+    symlink out of the models directory; the outbound guard accepted multicast and NAT64
+    addresses that carry a private one; a size limit that only worked when the server announced
+    a size. *Rule:* for anything that touches files or the network test links, traversal,
+    partial files, existing names and unannounced sizes; run a mutation check on every new
+    control and add a test for every survivor (or show the mutant is equivalent).
+28. **A shared function gained a dependency** (`run_turn` reads its agent from the database)
+    and 24 tests plus 3 dev scripts silently ran on the real default database, one file
+    taking 400 s instead of 13. *Rule:* when a shared function gains a dependency (database,
+    environment, network), grep its callers in `tests/` and `scripts/` first, give each an
+    isolated resource, then run the full suite, not only the targeted files.
+29. **`get_settings.cache_clear()` forgotten** after `monkeypatch.setenv`, or the job registry
+    and name claims left over from another test. *Rule:* clear the cache after every env
+    change in a test and reset process-wide registries in the fixture.
+30. **Line length fixed one file at a time** (E501, about ten rounds). *Rule:* write within 100
+    columns; run `ruff format` on new files only, never on existing ones (the repo does not
+    enforce it and it rewrites unrelated code).
+
+### Git (skill `commit-and-push`)
+
+31. **A guarded token committed after its guard test passed on an untracked file**: the
+    throwaway Fernet key in `scripts/dev/no_network_turn.py`; `test_no_committed_secrets` reads
+    tracked files, so `main` was red after the push. *Rule:* `git add -A` first, then run the
+    guard tests, then commit; generate throwaway keys at run time; never write a guarded token
+    (a key, the earlier project's name) in a tracked file, quoting the forbidden word included
+    (a `git grep` command in `CLAUDE.md` tripped the independence test).
+32. **Scripts used to answer a request left in the scratchpad** (the mutation runners of #108
+    to #110, the issue creation script). *Rule:* copy every script used into `scripts/dev/` with
+    an index line before reporting.
+
 ## Scripts
 
 Every script used to answer a request is kept in `scripts/dev/` with a line in

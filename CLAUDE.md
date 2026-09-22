@@ -254,6 +254,10 @@ Learned the hard way, none of it derivable from the code. Context in
 - No round trips: finish, verify, record. An issue only for a real defect or a
   blocking owner decision; accepted limits stay in the status comment.
 - Test the fresh state too; verify before cleanup; `.venv/bin/python`.
+- Recurring work has skills in `.claude/skills/`: `issue-workflow` (one issue, start to finish),
+  `measure-first` (no number without a command), `mutation-check`, `test-conventions`,
+  `commit-and-push` (stage first, guards on the staged tree, neutral message) and `shell-traps`
+  (zsh, RTK hook, timeouts). Each rule is an incident recorded in `docs/LESSONS.md` (16 to 32).
 
 ## Where things are
 
