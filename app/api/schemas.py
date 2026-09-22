@@ -262,6 +262,42 @@ class ModelOut(BaseModel):
     configured: bool
 
 
+class RoutingRuleIn(BaseModel):
+    """One rule of the routing table (#105): match_value is an integer for
+    min_length, a string for command_prefix — validated by app.admin.routing
+    against match_type, since the two share no single Pydantic type.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    match_type: str
+    match_value: int | str
+    model: str
+
+
+class RoutingRuleOut(BaseModel):
+    match_type: str
+    match_value: str
+    model: str
+
+
+class RoutingIn(BaseModel):
+    """Replaces the whole routing table (PUT semantics): a field left out clears
+    to its empty default rather than staying unchanged, since a partial ordered
+    list has no obvious meaning to merge.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    default_model: str | None = Field(default=None, max_length=200)
+    rules: list[RoutingRuleIn] = Field(default_factory=list, max_length=50)
+    model_ctx_sizes: dict[str, int] = Field(default_factory=dict)
+
+
+class RoutingOut(BaseModel):
+    default_model: str | None
+    rules: list[RoutingRuleOut]
+    model_ctx_sizes: dict[str, int]
+
+
 class ModelImportIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str

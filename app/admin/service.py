@@ -27,6 +27,8 @@ from app.db.models import (
     Permission,
     PermissionKind,
     RequestStatus,
+    RoutingConfig,
+    RoutingRule,
     User,
     _utcnow,
 )
@@ -1113,6 +1115,8 @@ _COUNTED_MODELS = (
     Agent,
     ActionLog,
     AdminEvent,
+    RoutingRule,
+    RoutingConfig,
 )
 
 

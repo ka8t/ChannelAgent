@@ -398,12 +398,27 @@ if [ "$MODE" = "restore" ]; then
 fi
 
 # --- 2. Native llama-server: reuse it if running, start it if not (macOS only) ---
+# LLAMA_ROUTER_MODE=true (#105) starts it in its own router mode instead of loading one
+# fixed MODEL_FILE: every .gguf in MODELS_DIR becomes selectable by the request's "model"
+# field, loaded on demand up to LLAMA_MODELS_MAX at once. Off by default so an existing
+# single-model setup, and the live container it serves, is untouched by this change.
 LLAMA_PORT="${LLAMA_PORT:-8080}"
 if [ "$(uname -s)" = "Darwin" ]; then
+  router_mode="${LLAMA_ROUTER_MODE:-false}"
+  if [ "$router_mode" = "true" ]; then
+    model_args_ok=0
+    [ -n "${LLAMA_SERVER_BIN:-}" ] && [ -x "${LLAMA_SERVER_BIN}" ] \
+      && [ -d "${MODELS_DIR:-}" ] && model_args_ok=1
+    model_args=(--models-dir "${MODELS_DIR:-}" --models-max "${LLAMA_MODELS_MAX:-4}")
+  else
+    model_args_ok=0
+    [ -n "${LLAMA_SERVER_BIN:-}" ] && [ -x "${LLAMA_SERVER_BIN}" ] \
+      && [ -n "${MODEL_FILE:-}" ] && [ -f "${MODELS_DIR:-}/${MODEL_FILE}" ] && model_args_ok=1
+    model_args=(--model "${MODELS_DIR:-}/${MODEL_FILE:-}")
+  fi
   if curl -sf --max-time 2 "http://localhost:${LLAMA_PORT}/health" >/dev/null 2>&1; then
     echo "==> llama-server already running on localhost:${LLAMA_PORT}."
-  elif [ -n "${LLAMA_SERVER_BIN:-}" ] && [ -x "${LLAMA_SERVER_BIN}" ] \
-       && [ -n "${MODEL_FILE:-}" ] && [ -f "${MODELS_DIR:-}/${MODEL_FILE}" ]; then
+  elif [ "$model_args_ok" = "1" ]; then
     echo "==> llama-server not running — starting it (loading the model can take a while)."
     mkdir -p logs
     # A minimal environment (#109): the engine needs none of the secrets of .env, which
@@ -412,7 +427,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
       "${LLAMA_SERVER_BIN}" \
       --port "${LLAMA_PORT}" \
       --host 127.0.0.1 \
-      --model "${MODELS_DIR}/${MODEL_FILE}" \
+      "${model_args[@]}" \
       --ctx-size "${LLAMA_CTX_SIZE:-65536}" \
       -ngl 99 \
       --jinja \
@@ -440,6 +455,11 @@ if [ "$(uname -s)" = "Darwin" ]; then
       echo "!! llama-server did not become healthy in time — check logs/llama-server.log" >&2
       exit 1
     fi
+  elif [ "$router_mode" = "true" ]; then
+    echo "!! llama-server is not reachable on localhost:${LLAMA_PORT}, and LLAMA_SERVER_BIN /" >&2
+    echo "!! MODELS_DIR are not both set to valid paths in .env, so router mode can't be" >&2
+    echo "!! started automatically. Set those two (see .env.example), or start it yourself." >&2
+    exit 1
   else
     echo "!! llama-server is not reachable on localhost:${LLAMA_PORT}, and LLAMA_SERVER_BIN /" >&2
     echo "!! MODELS_DIR / MODEL_FILE are not all set to valid paths in .env, so it can't be" >&2

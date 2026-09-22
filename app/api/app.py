@@ -28,6 +28,7 @@ from app.api.models_routes import router as models_router
 from app.api.operations import router as operations_router
 from app.api.protect import ProtectMiddleware
 from app.api.routes import router
+from app.api.routing_routes import router as routing_router
 from app.api.scopes import Scope, require, verify_scopes
 from app.api.status import router as status_router
 from app.api.version import API_VERSION
@@ -45,6 +46,7 @@ app.include_router(status_router)
 app.include_router(operations_router)
 app.include_router(config_router)
 app.include_router(models_router)
+app.include_router(routing_router)
 app.add_middleware(ProtectMiddleware)
 
 logger = logging.getLogger("channelagent.api")

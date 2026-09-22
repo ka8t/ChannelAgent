@@ -45,6 +45,8 @@ VALID = {
     "MODELS_DIR": "/opt/llama/models",
     "LLAMA_SERVER_BIN_DIR": "/opt/llama/bin",
     "LLAMA_THREADS": "4",
+    "LLAMA_ROUTER_MODE": "true",
+    "LLAMA_MODELS_MAX": "4",
     "TELEGRAM_BOT_TOKEN": TOKEN,
     "TELEGRAM_ALLOWED_USERS": "111,222",
     "EMAIL_IMAP_HOST": "ssl0.ovh.net",
@@ -91,6 +93,9 @@ INVALID = MEASURED + [
     ("LLAMA_CTX_SIZE", "0"),
     ("LLAMA_CTX_SIZE", "1e3"),
     ("LLAMA_THREADS", "-1"),
+    ("LLAMA_MODELS_MAX", "0"),
+    ("LLAMA_ROUTER_MODE", "yes"),
+    ("LLAMA_ROUTER_MODE", "True"),
     ("MIGRATION_BACKUPS_KEEP", "1234567890"),
     ("MIGRATION_BACKUPS_KEEP", "-1"),
     ("API_SERVER_HOST", "-bad.example"),
@@ -150,7 +155,7 @@ def test_the_kinds_are_the_ones_the_module_knows():
     known = {
         "free", "fernet_key", "port", "uint", "posint", "bytes", "host", "ip", "http_url",
         "database_url", "telegram_token", "telegram_users", "matrix_user", "api_key",
-        "email_tag", "email_folder",
+        "email_tag", "email_folder", "bool",
     }  # fmt: skip
     assert set(rules.RULES.values()) <= known
 

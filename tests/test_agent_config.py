@@ -338,7 +338,9 @@ def test_the_migration_gives_existing_agents_the_defaults_and_goes_back(tmp_path
     con.close()
     check = _alembic(db, "check")
     assert check.returncode == 0, check.stdout + check.stderr
-    assert _alembic(db, "downgrade", "-1").returncode == 0
+    # Target the revision by name, not "-1": #105 added a migration on top of this
+    # one, so "one step back" no longer lands before this migration's own columns.
+    assert _alembic(db, "downgrade", "9dbfacca49a4").returncode == 0
     con = sqlite3.connect(db)
     columns = [c[1] for c in con.execute("pragma table_info(agents)")]
     assert columns == ["id", "user_id", "name", "is_active", "created_at"]

@@ -152,6 +152,9 @@ def _meaning(kind: str, value: str) -> str | None:
         # Same rule as the email adapter: the folder goes into IMAP commands.
         if value.strip() and not (value.isascii() and not any(c in value for c in '"\\*%')):
             return "must be ASCII without quotes, backslashes or the wildcards * and %"
+    elif kind == "bool":
+        if value not in ("true", "false"):
+            return 'must be "true" or "false"'
     else:  # pragma: no cover - guarded by the test that lists every kind
         raise ValueError(f"unknown rule kind {kind!r}")
     return None
@@ -173,6 +176,8 @@ RULES: dict[str, str] = {
     "MODELS_DIR": "free",
     "LLAMA_SERVER_BIN_DIR": "free",
     "LLAMA_THREADS": "posint",
+    "LLAMA_ROUTER_MODE": "bool",
+    "LLAMA_MODELS_MAX": "posint",
     "TELEGRAM_BOT_TOKEN": "telegram_token",
     "TELEGRAM_ALLOWED_USERS": "telegram_users",
     "EMAIL_IMAP_HOST": "host",
@@ -211,6 +216,7 @@ REQUIRED = frozenset(
         "MIGRATION_BACKUPS_KEEP",
         "LLAMA_PORT",
         "LLAMA_THREADS",
+        "LLAMA_MODELS_MAX",
         "EMAIL_IMAP_PORT",
         "EMAIL_SMTP_PORT",
         "EMAIL_TRIGGER_TAG",

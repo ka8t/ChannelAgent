@@ -992,3 +992,41 @@ comment with numbers on the issue, leave it open. Commit and push only when the 
 the owner) and the container was rebuilt and recreated from the tree at `527c4be` (image `152a1e0bc63b`,
 healthy 7 s after the start, the real database migrated to `b11c1796e218` with users 2, agents 3, action
 logs 28 unchanged). Left for the owner: the decision on closing issues.
+
+## #105 model routing, working tree, not committed (2026-09-22)
+
+Next issue of the P1 order after #110. `llama-server`'s own router mode (`--models-dir`,
+`--models-max`, `--models-autoload`) replaces `llama-swap`: decision order, first match wins —
+the agent's own model (#110), then an admin-configured ordered list of rules (`min_length`,
+`command_prefix`), then a default model. No `/model <name>` chat command built (no existing
+convention for one in this codebase, and no Done-when needs it) and no classifier (D7, owner's
+decision, already recorded in `docs/COMPARISON_AJEAN.md`) — left as an "Open question(s)" comment
+on the issue rather than built speculatively or silently dropped.
+
+**New**: tables `routing_rules`/`routing_config` (migration `81d74ae85b06`, checked on a copy of
+the real database: upgrade, `alembic check`, downgrade, upgrade all exit 0), `app/admin/routing.py`
+(validation, `select_model`), `GET`/`PUT /routing` (`app/api/routing_routes.py`), `LLAMA_ROUTER_MODE`
+/`LLAMA_MODELS_MAX` in `start.sh` and `.env.example` (off by default, so an existing single-model
+setup is untouched), the "bool" value kind in `app/settings_rules.py`.
+
+**Measured on this Mac** (build b10976-987498f45, 3 installed models): a cold model swap (first
+request to a model not yet loaded) took 21.8 s, a warm one 49 ms; `--models-max 2` kept 2 of 3
+models resident (RSS ~13.7 GB + ~0.69 GB together), evicting the third on demand; an unrecognized
+`model` value is refused by the router with HTTP 400, caught by the new fallback, while
+single-model mode (today's live engine) silently ignores an unrecognized `model` field — so the
+graph.py change is inert against the live container until an admin sets `LLAMA_ROUTER_MODE=true`.
+`start.sh`'s new branch verified in an isolated sandbox (copied script, a fake `llama-server` stub
+capturing argv, a throwaway port) for both `LLAMA_ROUTER_MODE=true` (`--models-dir ... --models-max
+...`) and `false` (unchanged `--model ...`); the live engine on port 8080 confirmed untouched
+throughout (same pid before and after). Full suite: 1314 passed, 0 failed (190 s); `ruff check .`
+clean. The full run caught three drifted hardcoded-schema tests (`test_storage_checkpoints.py`,
+`test_storage_overview.py`, `test_settings_rules.py`) and one migration test that assumed "one step
+back" was #110's own migration — all fixed in the same change. 9 mutations of the new controls, 0
+survivors after two fixes (a missing `MAX_RULES`-limit test, and a token-budget test whose filler
+was too small to ever exceed either budget being compared).
+
+**Left for later, not built now**: `docker-compose.prod.yml`'s static `command:` list is not wired
+for router mode (still single-model) — noted on the issue as an open question rather than a new
+issue, since production topology (#92) is not live yet; `model_ctx_sizes` is admin-configured, not
+auto-discovered from the router's own `/v1/models` listing (would add a network round trip to every
+turn).

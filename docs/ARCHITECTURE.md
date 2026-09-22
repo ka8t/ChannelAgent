@@ -1147,6 +1147,44 @@ the checkpoint ids stay readable.
   and can lose detail; up to 5 messages just outside the window are neither in the
   window nor yet in a summary; a single message larger than the window still fails.
 
+### Model routing ([#105](https://github.com/ka8t/ChannelAgent/issues/105))
+
+Which model answers a turn, without `llama-swap` (audit finding below: its own
+untracked update lifecycle let a VPS silently run a two-week-stale
+`llama-server` through a real incident). `llama-server`'s own router mode
+(`--models-dir`, `--models-max`, `LLAMA_ROUTER_MODE=true` in `start.sh`, off by
+default) loads several models on demand behind the one OpenAI-compatible
+endpoint; ChannelAgent starts and stops no engine process, it only chooses the
+request's `model` field. Decision order, first match wins:
+
+1. **Explicit**: the model set on the agent (`Agent.model`, #110).
+2. **Rules**: an admin-configured, ordered list on what is known about the
+   message before any model call — `min_length` or `command_prefix` — read
+   through `GET /routing`, written through `PUT /routing`
+   (`app/admin/routing.py`). No `/model` chat command yet (open question on
+   the issue: not needed by any Done-when, and its own UX — one-shot or
+   persistent, confirmation reply — was undecided).
+3. **Default model**: also part of the routing table.
+
+No classifier (D7, `docs/COMPARISON_AJEAN.md`): a rule call adds no latency
+and no extra model swap to a turn. Each model may have its own context size
+(`model_ctx_sizes`, also part of the routing table) driving its own history
+budget (`app/graph.py::call_llm`) — it only ever narrows `LLAMA_CTX_SIZE`,
+never widens it, since that is the real cap every router-loaded model starts
+with. An unknown or failed-to-load model falls back once to the routing
+default and is logged, never silent (`app/graph.py::_chat_with_fallback`).
+
+Measured on this Mac (2026-09-22, build b10976-987498f45, 3 models: Llama-3.1-8B
+Q4_K_M, qwen2.5-0.5b, qwen2.5-coder-1.5b, all Q4_K_M): a cold swap (first
+request to a model not yet loaded) took 21.8 s; a warm request (already
+loaded) took 49 ms. `--models-max 2` kept 2 of the 3 resident, evicting the
+third on demand; RSS with the 8B and the 0.5B model loaded together was
+~13.7 GB + ~0.69 GB. An unrecognized `model` value is refused by the router
+with HTTP 400 (`"model 'x' not found"`), which is exactly what the fallback
+in `app/graph.py` catches; single-model mode (no router) silently ignores an
+unrecognized `model` field instead, so nothing changes for an existing
+single-model deployment until `LLAMA_ROUTER_MODE=true` is set.
+
 ### Compute topology
 
 - **Local macOS development**: a native `llama-server` process runs
@@ -1164,9 +1202,13 @@ the checkpoint ids stay readable.
   update lifecycle let that VPS silently run a two-week-stale
   `llama-server` through a real incident. A containerized `llama-server`
   needs none of that (several models, if wanted, are handled by its own
-  router mode, #105) — and keeps the exact same OpenAI-compatible
+  router mode, #105 above) — and keeps the exact same OpenAI-compatible
   endpoint shape `app/graph.py` already talks to on the Mac, so dev and
-  prod run identical inference code paths, not two.
+  prod run identical inference code paths, not two. `docker-compose.prod.yml`
+  itself is not yet wired for router mode (a static `command:` list, one
+  `--model` flag): still the single-model launch, tracked as an open question
+  on #105 rather than a new issue, since production topology (#92) is not
+  live yet.
 
 The application code that calls the LLM gateway does not need to know
 which topology it is running against — only the base URL

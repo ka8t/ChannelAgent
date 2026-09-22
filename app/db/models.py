@@ -226,3 +226,35 @@ class AdminEvent(Base):
     target_type: Mapped[str] = mapped_column(String(32), nullable=False)
     target_id: Mapped[int | None] = mapped_column(default=None)
     details: Mapped[str | None] = mapped_column(EncryptedString, default=None)
+
+
+class RoutingRule(Base):
+    """One rule of the model-routing table (#105), evaluated only when a turn's
+    agent has no explicit model of its own (Agent.model, #110, decision layer 1).
+    `position` orders the list; the first matching rule wins. `match_value` is a
+    stringified threshold (`min_length`) or a literal prefix (`command_prefix`),
+    both validated by app/admin/routing.py before they ever reach the database.
+    """
+
+    __tablename__ = "routing_rules"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    position: Mapped[int] = mapped_column(nullable=False, index=True)
+    match_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    match_value: Mapped[str] = mapped_column(String(200), nullable=False)
+    model: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class RoutingConfig(Base):
+    """The routing table's default model (decision layer 3) and, per model, the
+    context size app/graph.py budgets the conversation history against (#105).
+    One row (id=1): admin configuration, not code. LLAMA_CTX_SIZE stays the
+    engine-wide cap every router-loaded model is started with; a size here only
+    ever narrows a model's own budget below that cap, never widens it.
+    """
+
+    __tablename__ = "routing_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    default_model: Mapped[str | None] = mapped_column(String(200), default=None)
+    model_ctx_sizes: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))

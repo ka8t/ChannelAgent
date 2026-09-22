@@ -30,6 +30,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from app import checkpoints
+from app.admin import routing as routing_service
 from app.config import get_settings
 from app.db.models import Agent, Channel
 from app.db.session import session_scope
@@ -170,6 +171,30 @@ async def _chat(client: httpx.AsyncClient, messages: list[dict], **extra) -> str
     return response.json()["choices"][0]["message"]["content"]
 
 
+async def _chat_with_fallback(
+    client: httpx.AsyncClient,
+    messages: list[dict],
+    model: str | None,
+    default_model: str | None,
+) -> str:
+    """The turn's reply (#105): a model that the engine no longer has (deleted,
+    renamed, or never installed) answers 400, in router mode as well as single-
+    model mode; retried once against the routing default, and the fallback is
+    logged, never silent. Nothing to fall back to (no default, or it *is* the
+    one that failed) lets the error surface as any other failed turn (#51).
+    """
+    try:
+        return await _chat(client, messages, **({"model": model} if model else {}))
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 400 and model and default_model and model != default_model:
+            logger.warning(
+                "Model %r is unavailable, falling back to the routing default %r",
+                model, default_model,
+            )
+            return await _chat(client, messages, model=default_model)
+        raise
+
+
 async def _summarize(
     client: httpx.AsyncClient, previous: str, dropped: list[BaseMessage], **extra
 ) -> str | None:
@@ -232,10 +257,15 @@ async def call_llm(state: GraphState) -> GraphState:
     messages = state["messages"]
     summary = state.get("summary", "")
     covers = state.get("summary_covers", 0)
-    budget = history_token_budget(settings.llama_ctx_size)
     update: dict = {}
     agent = _agent_settings.get() or {}
     system_prompt, model = agent.get("system_prompt"), agent.get("model")
+    default_model = agent.get("default_model")
+    # A model's own context size (#105) only ever narrows the engine-wide cap
+    # LLAMA_CTX_SIZE, never widens it: that cap is what every router-loaded model
+    # is actually started with (see docs/ARCHITECTURE.md, "Model routing").
+    ctx_size = min(agent.get("ctx_size") or settings.llama_ctx_size, settings.llama_ctx_size)
+    budget = history_token_budget(ctx_size)
     extra = {"model": model} if model else {}
 
     async with httpx.AsyncClient(base_url=settings.llama_server_url, timeout=120) as client:
@@ -259,7 +289,9 @@ async def call_llm(state: GraphState) -> GraphState:
         prefix = _prefix(system_prompt, summary)
         if prefix:
             sent = [SystemMessage(content=prefix), *window]
-        reply = await _chat(client, convert_to_openai_messages(sent), **extra)
+        reply = await _chat_with_fallback(
+            client, convert_to_openai_messages(sent), model, default_model
+        )
 
     return {"messages": [AIMessage(content=reply)], **update}
 
@@ -355,9 +387,24 @@ async def run_turn(
     config = {"configurable": {"thread_id": thread_id}}
     async with session_scope() as session:
         agent = await session.get(Agent, agent_id)
-    _agent_settings.set(
-        {"system_prompt": agent.system_prompt, "model": agent.model} if agent is not None else {}
-    )
+        if agent is not None:
+            routing = await routing_service.get_routing(session)
+    if agent is None:
+        _agent_settings.set({})
+    else:
+        # Decision order (#105): the agent's own model (#110) first; only when it has
+        # none are the routing rules, then the default model, consulted.
+        model = agent.model or routing_service.select_model(
+            text=text, rules=routing["rules"], default_model=routing["default_model"]
+        )
+        _agent_settings.set(
+            {
+                "system_prompt": agent.system_prompt,
+                "model": model,
+                "default_model": routing["default_model"],
+                "ctx_size": routing["model_ctx_sizes"].get(model) if model else None,
+            }
+        )
     new_messages = [HumanMessage(content=text)]
     if retry:
         state = await graph.aget_state(config)
