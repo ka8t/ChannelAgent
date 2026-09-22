@@ -1185,6 +1185,111 @@ in `app/graph.py` catches; single-model mode (no router) silently ignores an
 unrecognized `model` field instead, so nothing changes for an existing
 single-model deployment until `LLAMA_ROUTER_MODE=true` is set.
 
+### Tool calling ([#115](https://github.com/ka8t/ChannelAgent/issues/115), epic #107)
+
+Foundation for tool use, ahead of the MCP client and server registry
+(`docs/MCP_EXTENSION.md`, #116): whether the engine returns a parsed `tool_calls`
+field at all (`app/tools.py::tools_are_supported`, a `tool_choice: "required"`
+probe checked once per process and cached), and the loop that runs while the
+engine keeps asking for more of them (`app/tools.py::run_tool_loop`) — at most
+4 requests per turn, a call already made this turn (same name and arguments)
+not executed again, a hung tool cut off after 20 s, results capped at 4000
+characters and framed as untrusted data, not instructions. Not wired into
+`app/graph.py::call_llm` yet: `Agent.tools` (#110) is names only, with nothing
+to resolve them into schemas and executors until #116's catalogue exists.
+
+`--skip-chat-parsing` is removed from `start.sh` and `docker-compose.prod.yml`
+(build 10976, commit 987498f45): with it, a tool call is returned as raw JSON
+text in `content` (`finish_reason=stop`); without it, `tool_calls` is filled
+(`finish_reason=tool_calls`). Measured freshly on this Mac (2026-09-22): 5
+scripted ordinary (non-tool) prompts at temperature 0 gave byte-identical
+replies with and without the flag — removing it changes nothing about ordinary
+chat, only whether a tool call is parsed. Full suite unaffected: 1325 passed, 0
+failed.
+
+Benchmark (`scripts/dev/live/tool_calling_benchmark.py`, real
+`Meta-Llama-3.1-8B-Instruct-Q4_K_M`, 12 scripted tasks, temperature 0):
+
+| T (exposed tools) | tool-selection accuracy | argument-validity rate |
+|---|---|---|
+| 1  | 100% | 100% |
+| 5  | 100% | 100% |
+| 10 | 100% | 92% |
+| 20 | 100% | 92% |
+
+Tool selection stays perfect through T=20; argument validity dips to 11/12 at
+T=10 and T=20 (one task's arguments stopped matching the declared schema).
+Well above any threshold that would justify routing tool-heavy turns to a
+larger model yet (docs/MCP_EXTENSION.md section 6) — revisit if a real
+MCP-backed catalogue (#116) behaves differently with actual tool descriptions
+instead of this benchmark's short synthetic ones.
+
+### MCP client and server registry ([#116](https://github.com/ka8t/ChannelAgent/issues/116), epic #107)
+
+The `mcp` SDK, 1.30.0 (owner decision M6 — reuses the locked `httpx`, no second
+HTTP stack, unlike 2.2.0). A server registry in the database
+(`app/db/models.py::McpServer`), declared only by an administrator (never a
+user), with two transports:
+
+- **stdio**, restricted to a vetted built-in the project ships and tests
+  (`builtin_id`, looked up in `app/mcp/builtin.py::REGISTRY` — never an
+  admin-supplied command, which would be arbitrary code execution as a
+  feature). One built-in shipped: `time` (`app/mcp/builtin_servers/time_server.py`,
+  a `get_time(timezone)` tool). Launched with the SDK's own safe default
+  environment (`HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER` only) plus a
+  server's own declared `env_vars`, never this application's secrets — measured
+  directly (2026-09-22): with `ENCRYPTION_KEY`, `API_SERVER_KEY`,
+  `TELEGRAM_BOT_TOKEN`, `EMAIL_PASSWORD`, `HF_TOKEN` and `DATABASE_URL` all set
+  in the parent process, **0 of them** reach the child's environment.
+- **Streamable HTTP**, one exact URL, re-checked by the outbound guard
+  (`app/security/outbound.py`, #104) on every connection, not only when
+  declared — a name that later repoints does not get a free pass. `egress`
+  (`local`/`lan`/`internet`) controls whether a private address is allowed.
+
+`app/mcp/manager.py::Manager` keeps one `ManagedServer` per configured server:
+lazy connection (nothing opens until a tool is actually needed), idle
+disconnect (300 s unused), restart with exponential backoff after a failure (2
+s doubling to 60 s, refusing to retry immediately in between), a concurrency
+semaphore and a per-call timeout per server, results capped
+(`result_max_bytes`) before they ever reach `app/tools.py::run_tool_loop`
+(#115), which frames them as untrusted data. One failing server never stops
+another — every manager method raises only `McpServerError`.
+
+`app/mcp/catalogue.py` builds the OpenAI `tools` list from `mcp__<server>__<tool>`
+names, filtered by an agent's own allow-list (`Agent.tools`, #110) and by each
+server's per-tool switch (`disabled_tools`); the executor it builds dispatches
+a call back to the right server and writes exactly one `McpCall` row (own
+minimal audit trail; #117 broadens it with confirmation and definition
+pinning). Wired into `app/graph.py::call_llm`: when an agent has tools and the
+engine supports tool calling (#115's probe), a turn runs the tool loop instead
+of a plain chat call.
+
+Admin API: `GET`/`POST /mcp/servers`, `GET`/`PATCH`/`DELETE
+/mcp/servers/{id}`, `POST /mcp/servers/{id}/test` (connects once, outside the
+shared manager, reports reachability and the live tool list), `GET
+/mcp/servers/{id}/tools`, `PATCH /mcp/servers/{id}/tools/{tool}` (the per-tool
+switch). The server's `transport` concept is named `protocol` in the schema
+and the database: the Admin API's generated CLI (#109) already reserves
+`--transport` as a global flag for how the CLI itself reaches the API,
+unrelated to an MCP server's own transport — the two collided under the
+contract test before the rename.
+
+Measured end to end on this Mac (2026-09-22), against the real built-in `time`
+server: a cold stdio connect (spawn plus handshake) took ~0.3 s, a warm call
+~18 ms; a server that exits immediately fails in ~0.03 s; a server that sleeps
+past its configured 1 s timeout is cut off in ~1.3 s (`anyio.fail_after`, not
+`asyncio.wait_for` — the SDK's transports are anyio task groups, and a raw
+asyncio cancellation across that boundary corrupts their cleanup); a 10 MB
+tool result is capped to `result_max_bytes` and returned in ~1.8 s (limit 10
+s) — a fourth, healthy server answers throughout, independent of the other
+three. A real Telegram-shaped turn (mocked chat model, real built-in server)
+calls `mcp__time__get_time` and answers from its result, with exactly one
+`McpCall` row recorded.
+
+Streamable HTTP verified against the same built-in server run in HTTP mode
+(`MCP_HTTP_PORT`, test-only) — both transports exercise the identical
+`ManagedServer` code path.
+
 ### Compute topology
 
 - **Local macOS development**: a native `llama-server` process runs

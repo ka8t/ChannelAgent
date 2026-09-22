@@ -30,11 +30,15 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from app import checkpoints
+from app.admin import mcp as mcp_service
 from app.admin import routing as routing_service
 from app.config import get_settings
 from app.db.models import Agent, Channel
 from app.db.session import session_scope
+from app.mcp import catalogue as mcp_catalogue
+from app.mcp.manager import manager as mcp_manager
 from app.security.hashing import channel_identifier_key
+from app.tools import run_tool_loop, tools_are_supported
 
 logger = logging.getLogger("channelagent")
 
@@ -261,6 +265,8 @@ async def call_llm(state: GraphState) -> GraphState:
     agent = _agent_settings.get() or {}
     system_prompt, model = agent.get("system_prompt"), agent.get("model")
     default_model = agent.get("default_model")
+    agent_id = agent.get("agent_id")
+    tools_allowed = agent.get("tools_allowed") or set()
     # A model's own context size (#105) only ever narrows the engine-wide cap
     # LLAMA_CTX_SIZE, never widens it: that cap is what every router-loaded model
     # is actually started with (see docs/ARCHITECTURE.md, "Model routing").
@@ -289,9 +295,20 @@ async def call_llm(state: GraphState) -> GraphState:
         prefix = _prefix(system_prompt, summary)
         if prefix:
             sent = [SystemMessage(content=prefix), *window]
-        reply = await _chat_with_fallback(
-            client, convert_to_openai_messages(sent), model, default_model
+        openai_tools = (
+            await mcp_catalogue.build_tools(mcp_manager, tools_allowed)
+            if tools_allowed and await tools_are_supported(client)
+            else []
         )
+        if openai_tools:
+            executor = mcp_catalogue.make_executor(mcp_manager, agent_id)
+            reply, _rounds = await run_tool_loop(
+                client, convert_to_openai_messages(sent), openai_tools, executor, **extra
+            )
+        else:
+            reply = await _chat_with_fallback(
+                client, convert_to_openai_messages(sent), model, default_model
+            )
 
     return {"messages": [AIMessage(content=reply)], **update}
 
@@ -389,6 +406,10 @@ async def run_turn(
         agent = await session.get(Agent, agent_id)
         if agent is not None:
             routing = await routing_service.get_routing(session)
+            # Only queried when the agent might actually use one (#116): most agents
+            # have no tools, and every turn otherwise pays a query for nothing.
+            if agent.tools:
+                mcp_manager.configure(await mcp_service.enabled_configs(session))
     if agent is None:
         _agent_settings.set({})
     else:
@@ -403,6 +424,8 @@ async def run_turn(
                 "model": model,
                 "default_model": routing["default_model"],
                 "ctx_size": routing["model_ctx_sizes"].get(model) if model else None,
+                "agent_id": agent.id,
+                "tools_allowed": set(agent.tools),
             }
         )
     new_messages = [HumanMessage(content=text)]

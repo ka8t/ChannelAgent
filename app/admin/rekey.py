@@ -39,6 +39,8 @@ APP_COLUMNS = (
     ("channel_identities", "id", "raw_address"),
     ("admin_events", "id", "details"),
     ("agents", "id", "system_prompt"),
+    ("mcp_servers", "id", "env_vars"),
+    ("mcp_calls", "id", "detail"),
 )
 # LangGraph SQLite checkpointer tables: (table, key columns, type column, blob column)
 CHECKPOINT_COLUMNS = (

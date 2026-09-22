@@ -1029,4 +1029,81 @@ was too small to ever exceed either budget being compared).
 for router mode (still single-model) — noted on the issue as an open question rather than a new
 issue, since production topology (#92) is not live yet; `model_ctx_sizes` is admin-configured, not
 auto-discovered from the router's own `/v1/models` listing (would add a network round trip to every
-turn).
+turn). Committed and pushed later the same day (`87f9f6e`).
+
+## #115 tool-calling foundation, working tree (2026-09-22)
+
+First issue of the MCP epic (#107). `--skip-chat-parsing` removed from `start.sh` and
+`docker-compose.prod.yml`, its effect measured before removing it (docs/MCP_EXTENSION.md section
+2 reproduced freshly): with the flag, a tool call comes back as raw JSON text, no `tool_calls`;
+without it, `tool_calls` is filled. 5 scripted ordinary prompts at temperature 0 gave
+byte-identical replies with and without the flag — no effect on ordinary chat. New `app/tools.py`:
+a capability probe (`tool_choice: "required"`, checked once per process, logs one line and
+disables tools if the engine never returns `tool_calls`) and a tool loop (at most 4 requests per
+turn, an identical call not re-executed, a hung tool cut off at 20 s via `asyncio.wait_for`
+— cancelling the enclosing task still stops it near-instantly since nothing catches
+`CancelledError` — results capped at 4000 characters and framed as untrusted data). Not wired into
+`app/graph.py::call_llm`: no tool catalogue exists to expose until #116, so this is infrastructure
+only, exercised directly by tests and the benchmark script, not by a live turn yet.
+
+**Benchmark** (`scripts/dev/live/tool_calling_benchmark.py`, real 8B model, 12 tasks, T = 1, 5, 10,
+20 exposed tools): tool-selection accuracy 100% at every T; argument-validity rate 100% at T=1
+and T=5, 92% (11/12) at T=10 and T=20.
+
+**Tests**: `tests/test_tools.py` 11 passed. Full suite: 1325 passed, 0 failed (196 s); `ruff check
+.` clean. 10 mutations of the new controls, 0 survivors.
+
+**Incident**: verifying the `docker-compose.prod.yml` edit with `docker compose config` printed
+the real `.env` (`ENCRYPTION_KEY`, `API_SERVER_KEY`, `EMAIL_PASSWORD`, `TELEGRAM_BOT_TOKEN`) into
+the session transcript — Compose reads `.env` automatically. Owner's decision: no rotation, never
+repeat it (`docs/LESSONS.md` 33). Verified the YAML and the flag's removal with a static parse and
+a targeted `grep` instead, both after the fact.
+
+## #116 MCP client and server registry, working tree (2026-09-22)
+
+Second issue of the MCP epic (#107), on top of #115's foundation. `mcp` 1.30.0 added to the
+dependency lock (owner decision M6, reuses the locked `httpx`). New: `app/db/models.py::McpServer`/
+`McpCall` (migration `9be5dd27d58e`, checked on a copy of the real database), `app/mcp/manager.py`
+(lazy connect, idle stop, backoff, per-server concurrency/timeout/result cap — one failing server
+never stops another), `app/mcp/catalogue.py` (`mcp__<server>__<tool>` names, per-agent allow-list,
+one `McpCall` row per call), `app/mcp/builtin_servers/time_server.py` (the one vetted built-in
+shipped and tested), `app/admin/mcp.py` and `app/api/mcp_routes.py` (`GET`/`POST /mcp/servers`,
+`GET`/`PATCH`/`DELETE /mcp/servers/{id}`, `POST .../test`, `GET .../tools`, `PATCH
+.../tools/{tool}`), wired into `app/graph.py::call_llm` (a tool loop runs instead of a plain chat
+call when the agent has tools and #115's probe says the engine supports them — nothing changes for
+an agent with none).
+
+**Real defect caught before it shipped**: the schema's own field for stdio-vs-http was named
+`transport`, colliding with the Admin API's generated CLI (#109), which already reserves
+`--transport` as a global flag for how the CLI itself reaches the API — `test_admin_client.py`'s
+own contract test caught the `argparse.ArgumentError` immediately when run inside the
+`python:3.12-slim` dependency-lock check. Renamed to `protocol` throughout (DB column, service
+layer, API schema, tests) rather than touching the CLI's own reserved flag.
+
+**Measured on this Mac** (real built-in `time` server, both transports — streamable HTTP run via
+`MCP_HTTP_PORT` for the test, not shipped as a default registered server): cold stdio connect ~0.3
+s, warm call ~18 ms; a child process had 0 of 6 real-shaped secret variable names in its
+environment (`ENCRYPTION_KEY`, `API_SERVER_KEY`, `TELEGRAM_BOT_TOKEN`, `EMAIL_PASSWORD`, `HF_TOKEN`,
+`DATABASE_URL`, all set in the parent); a server that exits fails in ~0.03 s, one that sleeps past
+its 1 s timeout is cut off in ~1.3 s, a 10 MB result is capped and returned in ~1.8 s (limit 10 s)
+— a fourth, healthy server answered throughout. A real end-to-end turn (mocked chat model, real
+built-in server) called `mcp__time__get_time` and answered from its result, with exactly one
+`McpCall` row.
+
+**A real async interop bug found and fixed**: `asyncio.wait_for` cutting off a coroutine that
+opens the SDK's own `anyio` task groups (`stdio_client`, `streamable_http_client`) corrupts their
+cancel-scope bookkeeping (`RuntimeError: Attempted to exit a cancel scope that isn't the current
+task's...`), masking the real connection error. Fixed with `anyio.fail_after`, scoped only around
+the single operation that completes within it (the handshake, one list/call request) — never
+around a whole method that keeps a connection open past its own return, since anyio requires a
+cancel scope to close in the same task and at the same nesting depth it opened in.
+
+**Dependency lock verified on `python:3.12-slim`** (Docker, not the local venv): installs cleanly,
+`mcp` imports; full suite **1365 passed** there (2 skipped) — the only failures (11) are this
+minimal image missing `git` and a working `python3` under `start.sh`'s own subprocess invocation,
+pre-existing gaps unrelated to MCP or the dependency lock, not run on this Mac's native suite.
+Native suite (this Mac): **1379 passed, 0 failed (228 s)**; `ruff check .` clean. 11 of 12
+mutations of the new controls caught; the 12th (skip the `tools_are_supported` probe when
+`tools_allowed` is empty) is equivalent — `app.mcp.catalogue.build_tools`'s own empty-allow-list
+guard already returns `[]` regardless, so the mutation only costs one extra cached probe request,
+never a wrong answer.

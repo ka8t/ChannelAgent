@@ -13,3 +13,4 @@ cryptography
 python-telegram-bot
 matrix-nio
 httpx
+mcp

@@ -24,6 +24,7 @@ from app.admin import service
 from app.api.config_routes import router as config_router
 from app.api.deps import verify_api_key
 from app.api.errors import error_responses
+from app.api.mcp_routes import router as mcp_router
 from app.api.models_routes import router as models_router
 from app.api.operations import router as operations_router
 from app.api.protect import ProtectMiddleware
@@ -47,6 +48,7 @@ app.include_router(operations_router)
 app.include_router(config_router)
 app.include_router(models_router)
 app.include_router(routing_router)
+app.include_router(mcp_router)
 app.add_middleware(ProtectMiddleware)
 
 logger = logging.getLogger("channelagent.api")

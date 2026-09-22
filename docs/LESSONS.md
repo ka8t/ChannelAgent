@@ -143,6 +143,22 @@ as procedures (`shell-traps`, `measure-first`, `issue-workflow`, `mutation-check
     to #110, the issue creation script). *Rule:* copy every script used into `scripts/dev/` with
     an index line before reporting.
 
+## Session of 2026-09-22: MCP foundation (#115)
+
+### Secrets (skill `shell-traps` — to extend)
+
+33. **`docker compose config` was run directly in the repository to verify a compose-file
+    edit** (removing `--skip-chat-parsing`, #115). Docker Compose reads the real `.env`
+    automatically and the command prints every resolved value, so the terminal output —
+    and therefore the session transcript — showed `ENCRYPTION_KEY`, `API_SERVER_KEY`,
+    `EMAIL_PASSWORD` and `TELEGRAM_BOT_TOKEN` in clear text. Owner's decision: no rotation,
+    do not repeat the mistake. *Rule:* never run `docker compose config` (or any command
+    that resolves and prints `.env`) against the real `.env` in this repository. Verify a
+    compose-file edit instead with `docker compose config` against a throwaway `.env` in an
+    isolated directory (copy only the compose files and fake values in), or with a static
+    check (`python3 -c "import yaml; yaml.safe_load(open(...))"` plus a targeted `grep` for
+    the flag/line changed) — neither ever touches the real file or prints a real value.
+
 ## Scripts
 
 Every script used to answer a request is kept in `scripts/dev/` with a line in

@@ -298,6 +298,73 @@ class RoutingOut(BaseModel):
     model_ctx_sizes: dict[str, int]
 
 
+class McpServerIn(BaseModel):
+    """`builtin_id` only applies to `stdio` (one of app.mcp.builtin.REGISTRY, never
+    an admin-supplied command); `url` only to `http`. Named `protocol`, not
+    `transport`: the generated CLI (#109) already reserves `--transport` as a
+    global flag (how it reaches the API), unrelated to this field.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(max_length=100)
+    protocol: Literal["stdio", "http"]
+    builtin_id: str | None = None
+    url: str | None = Field(default=None, max_length=500)
+    env_vars: dict[str, str] | None = None
+    egress: Literal["local", "lan", "internet"] = "local"
+    enabled: bool = True
+    timeout_seconds: int = 20
+    concurrency_limit: int = 2
+    result_max_bytes: int = 1_000_000
+
+
+class McpServerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    url: str | None = Field(default=None, max_length=500)
+    env_vars: dict[str, str] | None = None
+    egress: Literal["local", "lan", "internet"] | None = None
+    enabled: bool | None = None
+    timeout_seconds: int | None = None
+    concurrency_limit: int | None = None
+    result_max_bytes: int | None = None
+    disabled_tools: list[str] | None = None
+
+
+class McpServerOut(BaseModel):
+    """`has_env_vars` replaces `env_vars`: a secret is write-only, like `/config`."""
+
+    id: int
+    name: str
+    protocol: str
+    builtin_id: str | None
+    url: str | None
+    has_env_vars: bool
+    egress: str
+    enabled: bool
+    timeout_seconds: int
+    concurrency_limit: int
+    result_max_bytes: int
+    disabled_tools: list[str]
+    created_at: datetime
+
+
+class McpToolOut(BaseModel):
+    name: str
+    description: str
+    enabled: bool
+
+
+class McpServerTestOut(BaseModel):
+    reachable: bool
+    tools: list[McpToolOut]
+    error: str | None = None
+
+
+class McpToolToggleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+
+
 class ModelImportIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     path: str

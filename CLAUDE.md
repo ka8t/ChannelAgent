@@ -190,10 +190,12 @@ Facts, refreshed when they change; the issues have the detail.
 - Repo `ka8t/ChannelAgent` (private), branch `main`. Telegram and Email
   adapters are live; Matrix (#29) was abandoned and the dedicated bot mailbox (#42)
   dropped, the `[agent]` tag on the shared mailbox stays (owner, 2026-09-21).
-- Last full test suite: 1314 passed, 0 failed (190 s), `ruff check .` clean
-  (2026-09-22, working tree with #105 on top of `3486bca`, not committed yet).
-  Targeted runs while working; the full suite once per batch, before a commit
-  (see "Test scope").
+- Last full test suite: 1379 passed, 0 failed (228 s), `ruff check .` clean
+  (2026-09-22, working tree with #115 and #116 on top of `87f9f6e`, not committed
+  yet). Also verified on `python:3.12-slim` in Docker (the dependency lock, #116):
+  1365 passed there, the 11 failures being that minimal image's own missing `git`
+  and `python3`-under-`start.sh` gaps, not a regression. Targeted runs while
+  working; the full suite once per batch, before a commit (see "Test scope").
 - **CI is disabled at the owner's request** (`gh workflow disable 361230655`).
   Re-enable only when asked (`gh workflow enable 361230655`). Dependabot updates
   still run.
@@ -204,8 +206,8 @@ Facts, refreshed when they change; the issues have the detail.
   mailbox (#42) dropped.
 - Work in progress: epics #106 (admin API and UI) and #107 (MCP), plan in
   `docs/COMPARISON_AJEAN.md`, working order of P1 in the #106 comment. Done and pushed: #103,
-  #108, #133, #109 (partly), #104 with #134 to #138, #110. In the working tree: #105. Next: #115
-  to #117, #114, #113, #111, #112. History of the session: `docs/HISTORY.md`.
+  #108, #133, #109 (partly), #104 with #134 to #138, #110, #105. In the working tree: #115, #116.
+  Next: #117. History of the session: `docs/HISTORY.md`.
 - The owner's live container `channelagent-channelagent-1` (127.0.0.1:8700)
   runs the real app on the real `data/` and polls the real Telegram bot. Never
   start a second instance with the same token, never restart it uninvited.

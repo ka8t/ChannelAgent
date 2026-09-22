@@ -436,7 +436,6 @@ if [ "$(uname -s)" = "Darwin" ]; then
       -ctv q8_0 \
       --predict 4096 \
       --repeat-penalty 1.1 \
-      --skip-chat-parsing \
       > logs/llama-server.log 2>&1 &
     echo $! > .llama-server.pid
     echo "==> Waiting for it to become healthy (pid $(cat .llama-server.pid), log: logs/llama-server.log)..."

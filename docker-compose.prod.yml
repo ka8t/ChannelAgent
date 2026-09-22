@@ -46,7 +46,6 @@ services:
       - "4096"
       - --repeat-penalty
       - "1.1"
-      - --skip-chat-parsing
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
       interval: 15s

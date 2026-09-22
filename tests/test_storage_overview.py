@@ -27,6 +27,8 @@ TABLES = (
     "admin_events",
     "routing_rules",
     "routing_config",
+    "mcp_servers",
+    "mcp_calls",
 )
 OLDEST = datetime(2026, 9, 10, 8, 0, 0, tzinfo=UTC)
 NEWEST = datetime(2026, 9, 20, 10, 0, 0, tzinfo=UTC)
@@ -132,6 +134,8 @@ async def test_row_counts_match_a_direct_sql_query(populated):
         "admin_events": 0,
         "routing_rules": 0,
         "routing_config": 0,
+        "mcp_servers": 0,
+        "mcp_calls": 0,
     }
     assert overview.row_counts == expected, "known dataset"
     assert overview.row_counts == _direct_counts(), "independent direct query"

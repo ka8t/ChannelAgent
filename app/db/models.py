@@ -258,3 +258,68 @@ class RoutingConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     default_model: Mapped[str | None] = mapped_column(String(200), default=None)
     model_ctx_sizes: Mapped[dict] = mapped_column(JSON, default=dict, server_default=text("'{}'"))
+
+
+class McpTransport(enum.StrEnum):
+    STDIO = "stdio"
+    HTTP = "http"
+
+
+class McpEgress(enum.StrEnum):
+    LOCAL = "local"
+    LAN = "lan"
+    INTERNET = "internet"
+
+
+class McpServer(Base):
+    """One MCP server an administrator declared (#116): only administrators declare
+    servers, never users (docs/MCP_EXTENSION.md threat table). `stdio` is restricted
+    to a fixed set of vetted built-ins the project ships (`builtin_id`, looked up in
+    `app.mcp.builtin.REGISTRY`), never an admin-supplied command — that would be
+    arbitrary code execution as a feature. `http` is one exact URL, re-checked by the
+    outbound guard on every connection, not only when declared.
+    """
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    # Named "protocol", not "transport": the Admin API's own CLI generator (#109)
+    # already reserves --transport as a global flag (how the CLI reaches the API),
+    # unrelated to this field, and the two collided (test_admin_client.py caught it).
+    protocol: Mapped[McpTransport] = mapped_column(_db_enum(McpTransport), nullable=False)
+    builtin_id: Mapped[str | None] = mapped_column(String(100), default=None)
+    url: Mapped[str | None] = mapped_column(String(500), default=None)
+    # JSON object, stdio only: extra variables a built-in may read (none needs any yet).
+    env_vars: Mapped[str | None] = mapped_column(EncryptedString, default=None)
+    egress: Mapped[McpEgress] = mapped_column(_db_enum(McpEgress), default=McpEgress.LOCAL)
+    enabled: Mapped[bool] = mapped_column(default=True)
+    timeout_seconds: Mapped[int] = mapped_column(default=20)
+    concurrency_limit: Mapped[int] = mapped_column(default=2)
+    result_max_bytes: Mapped[int] = mapped_column(default=1_000_000)
+    # Per-tool switch (Admin UI/API): a tool this server offers but an admin turned off.
+    disabled_tools: Mapped[list] = mapped_column(JSON, default=list, server_default=text("'[]'"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class McpCall(Base):
+    """One tool call (#116's own minimal audit trail — its own Done-when needs "the
+    action log has exactly 1 row for the call"; #117 broadens this with confirmation
+    and definition pinning). No foreign keys, like AdminEvent: a call must survive a
+    deleted server or agent. `detail` is encrypted and never holds the raw arguments
+    or result, only what happened.
+    """
+
+    __tablename__ = "mcp_calls"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
+    agent_id: Mapped[int | None] = mapped_column(default=None)
+    server_name: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(nullable=False)
+    result_bytes: Mapped[int] = mapped_column(default=0)
+    detail: Mapped[str | None] = mapped_column(EncryptedString, default=None)

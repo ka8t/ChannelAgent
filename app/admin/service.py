@@ -24,6 +24,8 @@ from app.db.models import (
     Channel,
     ChannelIdentity,
     Direction,
+    McpCall,
+    McpServer,
     Permission,
     PermissionKind,
     RequestStatus,
@@ -1117,6 +1119,8 @@ _COUNTED_MODELS = (
     AdminEvent,
     RoutingRule,
     RoutingConfig,
+    McpServer,
+    McpCall,
 )
 
 
@@ -1163,6 +1167,8 @@ _ENCRYPTED_COLUMNS = (
     ("channel_identities", "raw_address"),
     ("admin_events", "details"),
     ("agents", "system_prompt"),
+    ("mcp_servers", "env_vars"),
+    ("mcp_calls", "detail"),
 )
 
 

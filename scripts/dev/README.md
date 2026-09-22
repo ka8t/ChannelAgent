@@ -26,6 +26,9 @@ real code for good.
 | `tools/verify_session_issues.py` | Fresh end-to-end check of #103, #108, #109, #110, #133 and #104 (#134 to #138) against the current tree, the live container and the live engine: 40 checks, one PASS or FAIL line each. Its only write to the live application is one backup file. |
 | `tools/create_plan_issues_2026-09-21.py` | Record of the script that created the sub-issues of the 2026-09-21 plan; not to be re-run. |
 | `mutations/issue_*.py` | Earlier self-contained mutation scripts, one per issue (#47 to #84); run them directly. |
+| `mutations/issue_105_mutations.py` | Mutation checks of #105 (model routing: rule validation, the ctx-size clamp, the no-pointless-retry fallback guard); run directly. |
+| `mutations/issue_115_mutations.py` | Mutation checks of #115 (the tool-calling foundation in `app/tools.py`: the capability-probe cache and classification, the rounds cap, the identical-call guard, the per-call timeout, the size cap, the untrusted-data label); run directly. |
+| `mutations/issue_116_mutations.py` | Mutation checks of #116 (the MCP manager, admin service and catalogue: the disabled-tool guard, per-call timeout, concurrency limit, backoff, result cap, the vetted-builtin and duplicate-name checks, the field bounds, the allow-list and disabled-tool filters in the catalogue); run directly. |
 | `rehearsals/*.sh` | Real Docker and real-data-copy runs (#48, #60, #70, #78, #89, #91); see `rehearsals/README.md`. |
 | `tools/verify_closed_issues.py` | Fresh end-to-end check of closed issues on a throwaway database and a mock model. |
 | `tools/run_test_groups.py` | Runs the targeted test files of each issue and prints the last pytest line. |
@@ -40,6 +43,7 @@ real code for good.
 | `live/stuck_adapter_demo.py` | Real application with an email adapter stuck on a silent IMAP server: healthy then unhealthy (#90). |
 | `live/email_failed_turn_live.py` | Live check of the failed-turn path on the real mailbox (#51). |
 | `live/agent_selection_check.py` | Checks agent selection through the API and the dispatcher with a fake model (#54). |
+| `live/tool_calling_benchmark.py` | #115's benchmark: tool-selection accuracy and argument-validity rate at T = 1, 5, 10, 20 exposed tools, against a real llama-server without `--skip-chat-parsing`. |
 | `../bench_log_search.py` | Times log search at 1k, 10k and 100k rows (#56). |
 | `../update_requirements.sh` | Regenerates the dependency locks in `python:3.12-slim` (#69). |
 
