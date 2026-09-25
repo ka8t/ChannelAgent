@@ -41,3 +41,6 @@ logs/
 # Local inference assets (#103): model weights and the llama-server bundle
 models/
 vendor/
+
+CLAUDE.md
+*.bak

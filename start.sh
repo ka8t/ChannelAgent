@@ -417,12 +417,19 @@ if [ "$(uname -s)" = "Darwin" ]; then
     model_args=(--model "${MODELS_DIR:-}/${MODEL_FILE:-}")
   fi
   if curl -sf --max-time 2 "http://localhost:${LLAMA_PORT}/health" >/dev/null 2>&1; then
-    echo "==> llama-server already running on localhost:${LLAMA_PORT}."
+    if [ "$router_mode" = "false" ] && ! pid_is .llama-server.pid "llama-server"; then
+      echo "⚠️  A llama-server is already running on port ${LLAMA_PORT} (outside start.sh)."
+      echo "⚠️  Ensure it is using the expected model (${MODEL_FILE:-})."
+    else
+      echo "==> llama-server already running on localhost:${LLAMA_PORT}."
+    fi
   elif [ "$model_args_ok" = "1" ]; then
     echo "==> llama-server not running — starting it (loading the model can take a while)."
     mkdir -p logs
     # A minimal environment (#109): the engine needs none of the secrets of .env, which
     # this script exported above, and a child process must not inherit them.
+    # Note: --skip-chat-parsing is intentionally omitted (#115): with it, tool calls come
+    # back as raw JSON text in content with empty tool_calls, breaking MCP and tool support.
     nohup env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}" LANG="${LANG:-C}" \
       "${LLAMA_SERVER_BIN}" \
       --port "${LLAMA_PORT}" \
